@@ -1,0 +1,21 @@
+[package]
+name = "buddaraysh"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+x11rb = { version = "0.12.0", optional = true }
+
+# [features]
+# default = ["xwayland"]
+# xwayland = ["encoding_rs", "wayland_frontend", "x11rb/composite", "x11rb/xfixes", "x11rb_event_source", "scopeguard"]
+
+[dependencies.smithay]
+version = "0.3.0"
+git = "https://github.com/Smithay/smithay"
+rev = "f4b204e"
+features = ["backend_winit", "renderer_gl", "wayland_frontend"]
