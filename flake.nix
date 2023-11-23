@@ -52,6 +52,7 @@
             src = craneLib.cleanCargoSource (craneLib.path ./.);
 
             buildInputs = with pkgs; [
+              pkg-config
               mold
               clang
               wayland
@@ -70,8 +71,34 @@
 
           craneLib = (crane.mkLib pkgs).overrideToolchain pkgs.rust-bin.stable.latest.minimal;
 
+          cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
+            panme = "buddaraysh-deps";
+          });
+
+          buddaraysh = craneLib.buildPackage (commonArgs // {
+            src = craneLib.path ./.;
+            inherit cargoArtifacts;
+
+            postInstall = ''
+              install -Dm0644 -t $out/share/wayland-sessions $src/buddaraysh.desktop
+            '';
+
+            postFixup = ''
+                patchelf --set-rpath "${pkgs.lib.makeLibraryPath libPath}" $out/bin/buddaraysh
+            '';
+
+            NIX_CFLAGS_LINK = "-fuse-ld=mold";
+          });
+
         in
         {
+
+          # `nix build`
+          packages = {
+            inherit buddaraysh;
+            default = buddaraysh;
+          };
+          
           # `nix develop`
           devShells.default = pkgs.mkShell
             {
@@ -95,6 +122,7 @@
               ];
 
               shellHook = ''
+                source .nixos-vm/vm.sh
                 alias cargo="RUST_LOG=debug cargo"
                 alias cargo2="RUST_LOG=debug DISPLAY=:2 cargo"
               '';
@@ -106,11 +134,11 @@
       flake = {
         formatter.x86_64-linux = nixpkgs.legacyPackages.x86_64-linux.nixpkgs-fmt;
         overlays.default = final: prev: {
-          idkman = self.packages.${final.system}.idkman;
+          buddaraysh = self.packages.${final.system}.buddaraysh;
         };
 
         # nixos development vm
-        nixosConfigurations.idkman = nixpkgs.lib.nixosSystem
+        nixosConfigurations.buddaraysh = nixpkgs.lib.nixosSystem
           {
             system = "x86_64-linux";
             modules = [
