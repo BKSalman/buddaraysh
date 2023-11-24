@@ -1,15 +1,17 @@
 use std::{
     collections::{HashMap, HashSet},
+    io,
     path::PathBuf,
     sync::{atomic::Ordering, Mutex},
     time::{Duration, Instant},
 };
 
-use smithay_drm_extras::{
-    drm_scanner::{DrmScanEvent, DrmScanner},
-    edid::EdidInfo,
-};
-
+#[cfg(feature = "renderer_sync")]
+use smithay::backend::drm::compositor::PrimaryPlaneElement;
+#[cfg(feature = "egl")]
+use smithay::backend::renderer::ImportEgl;
+#[cfg(feature = "debug")]
+use smithay::backend::renderer::ImportMem;
 use smithay::{
     backend::{
         allocator::{
@@ -34,7 +36,7 @@ use smithay::{
             gles::{GlesRenderer, GlesTexture},
             multigpu::{gbm::GbmGlesBackend, GpuManager, MultiRenderer, MultiTexture},
             sync::SyncPoint,
-            Bind, DebugFlags, ExportMem, ImportDma, ImportEgl, ImportMemWl, Offscreen, Renderer,
+            Bind, DebugFlags, ExportMem, ImportDma, ImportMemWl, Offscreen, Renderer,
         },
         session::{
             libseat::{self, LibSeatSession},
@@ -46,11 +48,12 @@ use smithay::{
     },
     delegate_dmabuf, delegate_drm_lease,
     desktop::{
+        space::Space,
         utils::{
             surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
             update_surface_primary_scanout_output, OutputPresentationFeedback,
         },
-        Space, Window,
+        Window,
     },
     input::pointer::{CursorImageAttributes, CursorImageStatus},
     output::{Mode as WlMode, Output, PhysicalProperties, Subpixel},
@@ -62,7 +65,7 @@ use smithay::{
         },
         drm::{
             control::{connector, crtc, Device, ModeTypeFlags},
-            Device as _, SystemError,
+            Device as _,
         },
         input::Libinput,
         rustix::fs::OFlags,
@@ -70,11 +73,7 @@ use smithay::{
             linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1,
             presentation_time::server::wp_presentation_feedback,
         },
-        wayland_server::{
-            backend::GlobalId,
-            protocol::wl_surface::{self},
-            Display, DisplayHandle,
-        },
+        wayland_server::{backend::GlobalId, protocol::wl_surface, Display, DisplayHandle},
     },
     utils::{
         Clock, DeviceFd, IsAlive, Logical, Monotonic, Physical, Point, Rectangle, Scale, Transform,
@@ -83,7 +82,7 @@ use smithay::{
         compositor,
         dmabuf::{
             DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState,
-            ImportError,
+            ImportNotifier,
         },
         drm_lease::{
             DrmLease, DrmLeaseBuilder, DrmLeaseHandler, DrmLeaseRequest, DrmLeaseState,
@@ -92,6 +91,11 @@ use smithay::{
         fractional_scale::with_fractional_scale,
     },
 };
+use smithay_drm_extras::{
+    drm_scanner::{DrmScanEvent, DrmScanner},
+    edid::EdidInfo,
+};
+
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
@@ -144,17 +148,19 @@ impl DmabufHandler for Buddaraysh<UdevData> {
 
     fn dmabuf_imported(
         &mut self,
-        global: &DmabufGlobal,
+        _global: &DmabufGlobal,
         dmabuf: Dmabuf,
-    ) -> Result<(), ImportError> {
-        // FIXME: return the error without panic
-        self.backend_data
+        notifier: ImportNotifier,
+    ) {
+        if self
+            .backend_data
             .gpus
             .single_renderer(&self.backend_data.primary_gpu)
             .and_then(|mut renderer| renderer.import_dmabuf(&dmabuf, None))
-            .unwrap();
-
-        Ok(())
+            .is_err()
+        {
+            notifier.failed();
+        }
     }
 }
 delegate_dmabuf!(Buddaraysh<UdevData>);
@@ -192,7 +198,7 @@ struct DrmSurfaceDmabufFeedback {
     scanout_feedback: DmabufFeedback,
 }
 
-struct Surface {
+pub struct Surface {
     display_handle: DisplayHandle,
     device_id: DrmNode,
     render_node: DrmNode,
@@ -513,7 +519,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut state = Buddaraysh::new(event_loop.handle(), &mut event_loop, display, data);
 
-    let backend = UdevBackend::new(state.backend_data.session.seat()).unwrap();
+    let backend = UdevBackend::new(&state.seat_name).unwrap();
 
     /*
      * Initialize libinput backend
@@ -739,18 +745,22 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         })
         .unwrap();
 
-    let mut args = std::env::args().skip(1);
-    let flag = args.next();
-    let arg = args.next();
+    std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
 
-    match (flag.as_deref(), arg) {
-        (Some("-c") | Some("--command"), Some(command)) => {
-            std::process::Command::new(command).spawn().ok();
-        }
-        _ => {
-            std::process::Command::new("kitty").spawn().ok();
-        }
-    }
+    // let mut args = std::env::args().skip(1);
+    // let flag = args.next();
+    // let arg = args.next();
+
+    // match (flag.as_deref(), arg) {
+    //     (Some("-c") | Some("--command"), Some(command)) => {
+    //         std::process::Command::new(command).spawn().ok();
+    //     }
+    //     _ => {
+    //         std::process::Command::new("kitty").spawn().ok();
+    //     }
+    // }
+
+    std::process::Command::new("kitty").spawn().ok();
 
     /*
      * Start XWayland if supported
@@ -1287,7 +1297,7 @@ impl Buddaraysh<UdevData> {
                         Some(DrmError::Access {
                             source,
                             ..
-                        }) if matches!(source, SystemError::PermissionDenied)
+                        }) if source.kind() == io::ErrorKind::PermissionDenied
                     ),
                     SwapBuffersError::ContextLost(err) => panic!("Rendering loop lost: {}", err),
                 }
@@ -1480,7 +1490,7 @@ impl Buddaraysh<UdevData> {
                     {
                         Some(DrmError::DeviceInactive) => true,
                         Some(DrmError::Access { source, .. }) => {
-                            matches!(source, SystemError::PermissionDenied)
+                            source.kind() == io::ErrorKind::PermissionDenied
                         }
                         _ => false,
                     },

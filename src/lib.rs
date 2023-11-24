@@ -1,5 +1,6 @@
 mod handlers;
 
+mod commands;
 mod cursor;
 mod drawing;
 mod grabs;

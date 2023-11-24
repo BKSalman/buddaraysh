@@ -19,7 +19,7 @@ use smithay::{
     utils::{Rectangle, Transform},
     wayland::dmabuf::{
         DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState,
-        ImportError,
+        ImportNotifier,
     },
 };
 use tracing::{error, info, warn};
@@ -54,13 +54,17 @@ impl DmabufHandler for Buddaraysh<WinitData> {
         &mut self,
         _global: &DmabufGlobal,
         dmabuf: Dmabuf,
-    ) -> std::result::Result<(), ImportError> {
-        self.backend_data
+        notifier: ImportNotifier,
+    ) {
+        if self
+            .backend_data
             .backend
             .renderer()
             .import_dmabuf(&dmabuf, None)
-            .map_err(|_| ImportError::Failed)?;
-        Ok(())
+            .is_err()
+        {
+            notifier.failed();
+        }
     }
 }
 delegate_dmabuf!(Buddaraysh<WinitData>);

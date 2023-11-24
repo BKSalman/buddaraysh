@@ -1,21 +1,27 @@
+use std::sync::atomic::Ordering;
+
 use smithay::{
     backend::{
         input::{
             AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
-            KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+            KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
         },
         session::Session,
     },
     input::{
-        keyboard::{keysyms as xkb, FilterResult},
-        pointer::{AxisFrame, ButtonEvent, MotionEvent},
+        keyboard::{keysyms as xkb, FilterResult, Keysym},
+        pointer::{AxisFrame, ButtonEvent, MotionEvent, RelativeMotionEvent},
     },
     reexports::wayland_server::{protocol::wl_surface::WlSurface, DisplayHandle},
-    utils::SERIAL_COUNTER,
+    utils::{Logical, Point, SERIAL_COUNTER},
+    wayland::{
+        pointer_constraints::{with_pointer_constraint, PointerConstraint},
+        seat::WaylandFocus,
+    },
 };
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
-use crate::{state::Buddaraysh, udev::UdevData, winit::WinitData};
+use crate::{commands::Command, state::Buddaraysh, udev::UdevData, winit::WinitData};
 
 impl Buddaraysh<WinitData> {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
@@ -150,64 +156,198 @@ impl Buddaraysh<WinitData> {
 impl Buddaraysh<UdevData> {
     pub fn process_input_event<I: InputBackend>(
         &mut self,
-        display_handle: &DisplayHandle,
+        _display_handle: &DisplayHandle,
         event: InputEvent<I>,
     ) {
         match event {
             InputEvent::Keyboard { event, .. } => {
-                println!("got keyboard event at: {}", event.time_msec());
-
                 let serial = SERIAL_COUNTER.next_serial();
                 let time = Event::time_msec(&event);
 
-                let vt = self.seat.get_keyboard().unwrap().input::<i32, _>(
+                let command = self.seat.get_keyboard().unwrap().input::<Command, _>(
                     self,
                     event.key_code(),
                     event.state(),
                     serial,
                     time,
-                    |_, _, handle| {
+                    |_, modifiers, handle| {
                         let keysym = handle.modified_sym();
 
-                        if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12)
+                        if modifiers.logo && keysym == Keysym::Q {
+                            return FilterResult::Intercept(Command::Spawn("kitty"));
+                        } else if modifiers.logo && modifiers.shift && keysym == Keysym::X {
+                            return FilterResult::Intercept(Command::Quit);
+                        } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12)
                             .contains(&keysym.raw())
                         {
                             // VTSwitch
-                            return FilterResult::Intercept(
+                            return FilterResult::Intercept(Command::SwitchVT(
                                 (keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32,
-                            );
+                            ));
                         }
 
                         FilterResult::Forward
                     },
                 );
 
-                if let Some(vt) = vt {
-                    info!(to = vt, "Trying to switch vt");
-                    if let Err(err) = self.backend_data.session.change_vt(vt) {
-                        error!(vt, "Error switching vt: {}", err);
+                if let Some(command) = command {
+                    match command {
+                        Command::SwitchVT(vt) => {
+                            info!(to = vt, "Trying to switch vt");
+                            if let Err(err) = self.backend_data.session.change_vt(vt) {
+                                error!(vt, "Error switching vt: {}", err);
+                            }
+                        }
+                        Command::Spawn(program) => {
+                            std::process::Command::new(program).spawn().ok();
+                        }
+                        Command::Quit => {
+                            info!("Quitting.");
+                            self.running.store(false, Ordering::SeqCst);
+                        }
+                        Command::None => {}
                     }
                 }
             }
-            InputEvent::PointerMotion { .. } => {}
-            InputEvent::PointerMotionAbsolute { event, .. } => {
-                let output = self.space.outputs().next().unwrap();
-
-                let output_geo = self.space.output_geometry(output).unwrap();
-
-                let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
-
+            InputEvent::PointerMotion { event, .. } => {
+                let mut pointer_location = self.pointer.current_location();
                 let serial = SERIAL_COUNTER.next_serial();
 
-                let pointer = self.seat.get_pointer().unwrap();
+                let pointer = self.pointer.clone();
+                let under = self.surface_under(pointer_location);
 
-                let under = self.surface_under(pos);
+                let mut pointer_locked = false;
+                let mut pointer_confined = false;
+                let mut confine_region = None;
+                if let Some((surface, surface_loc)) = under
+                    .as_ref()
+                    .and_then(|(target, l)| Some((target.wl_surface()?, l)))
+                {
+                    with_pointer_constraint(&surface, &pointer, |constraint| match constraint {
+                        Some(constraint) if constraint.is_active() => {
+                            // Constraint does not apply if not within region
+                            if !constraint.region().map_or(true, |x| {
+                                x.contains(pointer_location.to_i32_round() - *surface_loc)
+                            }) {
+                                return;
+                            }
+                            match &*constraint {
+                                PointerConstraint::Locked(_locked) => {
+                                    pointer_locked = true;
+                                }
+                                PointerConstraint::Confined(confine) => {
+                                    pointer_confined = true;
+                                    confine_region = confine.region().cloned();
+                                }
+                            }
+                        }
+                        _ => {}
+                    });
+                }
+
+                pointer.relative_motion(
+                    self,
+                    under.clone(),
+                    &RelativeMotionEvent {
+                        delta: event.delta(),
+                        delta_unaccel: event.delta_unaccel(),
+                        utime: event.time(),
+                    },
+                );
+
+                // If pointer is locked, only emit relative motion
+                if pointer_locked {
+                    pointer.frame(self);
+                    return;
+                }
+
+                pointer_location += event.delta();
+
+                // clamp to screen limits
+                // this event is never generated by winit
+                pointer_location = self.clamp_coords(pointer_location);
+
+                let new_under = self.surface_under(pointer_location);
+
+                // If confined, don't move pointer if it would go outside surface or region
+                if pointer_confined {
+                    if let Some((surface, surface_loc)) = &under {
+                        if new_under.as_ref().and_then(|(under, _)| under.wl_surface())
+                            != surface.wl_surface()
+                        {
+                            pointer.frame(self);
+                            return;
+                        }
+                        if let Some(region) = confine_region {
+                            if !region.contains(pointer_location.to_i32_round() - *surface_loc) {
+                                pointer.frame(self);
+                                return;
+                            }
+                        }
+                    }
+                }
 
                 pointer.motion(
                     self,
                     under,
                     &MotionEvent {
-                        location: pos,
+                        location: pointer_location,
+                        serial,
+                        time: event.time_msec(),
+                    },
+                );
+                pointer.frame(self);
+
+                // If pointer is now in a constraint region, activate it
+                // TODO Anywhere else pointer is moved needs to do this
+                if let Some((under, surface_location)) =
+                    new_under.and_then(|(target, loc)| Some((target.wl_surface()?, loc)))
+                {
+                    with_pointer_constraint(&under, &pointer, |constraint| match constraint {
+                        Some(constraint) if !constraint.is_active() => {
+                            let point = pointer_location.to_i32_round() - surface_location;
+                            if constraint
+                                .region()
+                                .map_or(true, |region| region.contains(point))
+                            {
+                                constraint.activate();
+                            }
+                        }
+                        _ => {}
+                    });
+                }
+            }
+            InputEvent::PointerMotionAbsolute { event, .. } => {
+                let serial = SERIAL_COUNTER.next_serial();
+
+                let max_x = self.space.outputs().fold(0, |acc, o| {
+                    acc + self.space.output_geometry(o).unwrap().size.w
+                });
+
+                let max_h_output = self
+                    .space
+                    .outputs()
+                    .max_by_key(|o| self.space.output_geometry(o).unwrap().size.h)
+                    .unwrap();
+
+                let max_y = self.space.output_geometry(max_h_output).unwrap().size.h;
+
+                let mut pointer_location =
+                    (event.x_transformed(max_x), event.y_transformed(max_y)).into();
+
+                // clamp to screen limits
+                pointer_location = self.clamp_coords(pointer_location);
+
+                let pointer = self.pointer.clone();
+                let under = self.surface_under(pointer_location);
+
+                debug!("pointer location: {pointer_location:#?}");
+
+                pointer.motion(
+                    self,
+                    under,
+                    &MotionEvent {
+                        location: pointer_location,
                         serial,
                         time: event.time_msec(),
                     },
@@ -299,6 +439,33 @@ impl Buddaraysh<UdevData> {
                 pointer.frame(self);
             }
             _ => {}
+        }
+    }
+
+    fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
+        if self.space.outputs().next().is_none() {
+            return pos;
+        }
+
+        let (pos_x, pos_y) = pos.into();
+        let max_x = self.space.outputs().fold(0, |acc, o| {
+            acc + self.space.output_geometry(o).unwrap().size.w
+        });
+        let clamped_x = pos_x.clamp(0.0, max_x as f64);
+        let max_y = self
+            .space
+            .outputs()
+            .find(|o| {
+                let geo = self.space.output_geometry(o).unwrap();
+                geo.contains((clamped_x as i32, 0))
+            })
+            .map(|o| self.space.output_geometry(o).unwrap().size.h);
+
+        if let Some(max_y) = max_y {
+            let clamped_y = pos_y.clamp(0.0, max_y as f64);
+            (clamped_x, clamped_y).into()
+        } else {
+            (clamped_x, pos_y).into()
         }
     }
 }
