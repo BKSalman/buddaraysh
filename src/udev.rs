@@ -21,12 +21,15 @@ use smithay::{
             Allocator, Fourcc,
         },
         drm::{
-            compositor::DrmCompositor, CreateDrmNodeError, DrmDevice, DrmDeviceFd, DrmError,
-            DrmEvent, DrmEventMetadata, DrmNode, DrmSurface, GbmBufferedSurface, NodeType,
+            compositor::{DrmCompositor, RenderFrameResult},
+            gbm::GbmFramebuffer,
+            CreateDrmNodeError, DrmDevice, DrmDeviceFd, DrmError, DrmEvent, DrmEventMetadata,
+            DrmNode, DrmSurface, GbmBufferedSurface, NodeType,
         },
         egl::{self, context::ContextPriority, EGLDevice, EGLDisplay},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
+            self,
             damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
             element::{
                 default_primary_scanout_output_compare, texture::TextureBuffer,
@@ -36,7 +39,7 @@ use smithay::{
             gles::{GlesRenderer, GlesTexture},
             multigpu::{gbm::GbmGlesBackend, GpuManager, MultiRenderer, MultiTexture},
             sync::SyncPoint,
-            Bind, DebugFlags, ExportMem, ImportDma, ImportMemWl, Offscreen, Renderer,
+            Bind, BufferType, DebugFlags, ExportMem, ImportDma, ImportMemWl, Offscreen, Renderer,
         },
         session::{
             libseat::{self, LibSeatSession},
@@ -67,16 +70,22 @@ use smithay::{
             control::{connector, crtc, Device, ModeTypeFlags},
             Device as _,
         },
+        gbm::BufferObject,
         input::Libinput,
         rustix::fs::OFlags,
         wayland_protocols::wp::{
             linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1,
             presentation_time::server::wp_presentation_feedback,
         },
-        wayland_server::{backend::GlobalId, protocol::wl_surface, Display, DisplayHandle},
+        wayland_server::{
+            backend::GlobalId,
+            protocol::{wl_output::WlOutput, wl_shm, wl_surface},
+            Display, DisplayHandle,
+        },
     },
     utils::{
-        Clock, DeviceFd, IsAlive, Logical, Monotonic, Physical, Point, Rectangle, Scale, Transform,
+        Clock, DeviceFd, IsAlive, Logical, Monotonic, Physical, Point, Rectangle, Scale, Size,
+        Transform,
     },
     wayland::{
         compositor,
@@ -89,6 +98,7 @@ use smithay::{
             LeaseRejected,
         },
         fractional_scale::with_fractional_scale,
+        shm,
     },
 };
 use smithay_drm_extras::{
@@ -99,13 +109,15 @@ use smithay_drm_extras::{
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
+    delegate_screencopy_manager,
     drawing::{PointerElement, CLEAR_COLOR},
+    protocols::screencopy::{frame::Screencopy, ScreencopyHandler, ScreencopyManagerState},
     render::{output_elements, CustomRenderElements},
     Backend, Buddaraysh, CalloopData,
 };
 
-type UdevRenderer<'a, 'b> =
-    MultiRenderer<'a, 'a, 'b, GbmGlesBackend<GlesRenderer>, GbmGlesBackend<GlesRenderer>>;
+type UdevRenderer<'a, 'b, 'c> =
+    MultiRenderer<'a, 'b, 'c, GbmGlesBackend<GlesRenderer>, GbmGlesBackend<GlesRenderer>>;
 
 // we cannot simply pick the first supported format of the intersection of *all* formats, because:
 // - we do not want something like Abgr4444, which looses color information, if something better is available
@@ -204,6 +216,7 @@ pub struct Surface {
     render_node: DrmNode,
     global: Option<GlobalId>,
     compositor: SurfaceComposition,
+    output: Output,
     #[cfg(feature = "debug")]
     fps: fps_ticker::Fps,
     #[cfg(feature = "debug")]
@@ -307,12 +320,18 @@ impl SurfaceComposition {
     }
 
     #[profiling::function]
-    fn render_frame<R, E, Target>(
-        &mut self,
+    fn render_frame<'a, R, E, Target>(
+        &'a mut self,
         renderer: &mut R,
-        elements: &[E],
+        elements: &'a [E],
         clear_color: [f32; 4],
-    ) -> Result<SurfaceCompositorRenderResult, SwapBuffersError>
+    ) -> Result<
+        (
+            SurfaceCompositorRenderResult,
+            Option<RenderFrameResult<'a, BufferObject<()>, GbmFramebuffer, E>>,
+        ),
+        SwapBuffersError,
+    >
     where
         R: Renderer + Bind<Dmabuf> + Bind<Target> + Offscreen<Target> + ExportMem,
         <R as Renderer>::TextureId: 'static,
@@ -351,7 +370,7 @@ impl SurfaceComposition {
                         _ => unreachable!(),
                     });
                 renderer.set_debug_flags(current_debug_flags);
-                res
+                res.map(|res| (res, None))
             }
             SurfaceComposition::Compositor(compositor) => compositor
                 .render_frame(renderer, elements, clear_color)
@@ -362,12 +381,15 @@ impl SurfaceComposition {
                     {
                         element.sync.wait();
                     }
-                    SurfaceCompositorRenderResult {
-                        rendered: render_frame_result.damage.is_some(),
-                        damage: None,
-                        states: render_frame_result.states,
-                        sync: None,
-                    }
+                    (
+                        SurfaceCompositorRenderResult {
+                            rendered: render_frame_result.damage.is_some(),
+                            damage: None,
+                            states: render_frame_result.states.clone(),
+                            sync: None,
+                        },
+                        Some(render_frame_result),
+                    )
                 })
                 .map_err(|err| match err {
                     smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => {
@@ -521,6 +543,8 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
 
     let backend = UdevBackend::new(&state.seat_name).unwrap();
 
+    ScreencopyManagerState::new::<Buddaraysh<UdevData>>(&display_handle);
+
     /*
      * Initialize libinput backend
      */
@@ -584,7 +608,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
                         // otherwise
                         surface.compositor.reset_buffers();
                     }
-                    loop_handle.insert_idle(move |data| data.state.render(node, None));
+                    loop_handle.insert_idle(move |data| data.state.render(node, None, None));
                 }
             }
         })
@@ -744,6 +768,8 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
             data.state.on_udev_event(event);
         })
         .unwrap();
+
+    debug!("setting WAYLAND_DISPLAY to {:#?}", state.socket_name);
 
     std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
 
@@ -1111,6 +1137,7 @@ impl Buddaraysh<UdevData> {
                 #[cfg(feature = "debug")]
                 fps_element,
                 dmabuf_feedback,
+                output,
             };
 
             device.surfaces.insert(crtc, surface);
@@ -1357,7 +1384,7 @@ impl Buddaraysh<UdevData> {
 
             self.loop_handle
                 .insert_source(timer, move |_, _, data| {
-                    data.state.render(dev_id, Some(crtc));
+                    data.state.render(dev_id, Some(crtc), None);
                     TimeoutAction::Drop
                 })
                 .expect("failed to schedule frame timer");
@@ -1365,7 +1392,12 @@ impl Buddaraysh<UdevData> {
     }
 
     // If crtc is `Some()`, render it, else render all crtcs
-    fn render(&mut self, node: DrmNode, crtc: Option<crtc::Handle>) {
+    fn render(
+        &mut self,
+        node: DrmNode,
+        crtc: Option<crtc::Handle>,
+        screencopy: Option<Screencopy>,
+    ) {
         trace!("rendering");
         let device_backend = match self.backend_data.backends.get_mut(&node) {
             Some(backend) => backend,
@@ -1376,16 +1408,21 @@ impl Buddaraysh<UdevData> {
         };
 
         if let Some(crtc) = crtc {
-            self.render_surface(node, crtc);
+            self.render_surface(node, crtc, screencopy);
         } else {
             let crtcs: Vec<_> = device_backend.surfaces.keys().copied().collect();
             for crtc in crtcs {
-                self.render_surface(node, crtc);
+                self.render_surface(node, crtc, None);
             }
         };
     }
 
-    fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) {
+    fn render_surface(
+        &mut self,
+        node: DrmNode,
+        crtc: crtc::Handle,
+        screencopy: Option<Screencopy>,
+    ) {
         profiling::scope!("render_surface", &format!("{crtc:?}"));
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
@@ -1479,6 +1516,7 @@ impl Buddaraysh<UdevData> {
             &mut self.cursor_status.lock().unwrap(),
             &self.clock,
             // self.show_window_preview,
+            screencopy,
         );
         let reschedule = match &result {
             Ok(has_rendered) => !has_rendered,
@@ -1517,7 +1555,7 @@ impl Buddaraysh<UdevData> {
             let timer = Timer::from_duration(reschedule_duration);
             self.loop_handle
                 .insert_source(timer, move |_, _, data| {
-                    data.state.render(node, Some(crtc));
+                    data.state.render(node, Some(crtc), None);
                     TimeoutAction::Drop
                 })
                 .expect("failed to schedule frame timer");
@@ -1635,9 +1673,9 @@ fn get_surface_dmabuf_feedback(
 
 #[allow(clippy::too_many_arguments)]
 #[profiling::function]
-fn render_surface<'a, 'b>(
+fn render_surface<'a, 'b, 'c>(
     surface: &'a mut Surface,
-    renderer: &mut UdevRenderer<'a, 'b>,
+    renderer: &mut UdevRenderer<'a, 'b, 'c>,
     space: &Space<Window>,
     output: &Output,
     pointer_location: Point<f64, Logical>,
@@ -1647,13 +1685,20 @@ fn render_surface<'a, 'b>(
     cursor_status: &mut CursorImageStatus,
     clock: &Clock<Monotonic>,
     // show_window_preview: bool,
+    screencopy: Option<Screencopy>,
 ) -> Result<bool, SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
 
     let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
 
-    if output_geometry.to_f64().contains(pointer_location) {
+    let render_cursor = if let Some(screencopy) = &screencopy {
+        screencopy.overlay_cursor
+    } else {
+        true
+    };
+
+    if render_cursor && output_geometry.to_f64().contains(pointer_location) {
         let cursor_hotspot = if let CursorImageStatus::Surface(ref surface) = cursor_status {
             compositor::with_states(surface, |states| {
                 states
@@ -1703,10 +1748,80 @@ fn render_surface<'a, 'b>(
     }
 
     let (elements, clear_color) = output_elements(output, space, custom_elements, renderer);
-    let res =
+    let (res, frame_result) =
         surface
             .compositor
             .render_frame::<_, _, GlesTexture>(renderer, &elements, clear_color)?;
+
+    // Copy framebuffer for screencopy.
+    if let Some(mut screencopy) = screencopy {
+        if let Some(frame_result) = frame_result {
+            // Mark entire buffer as damaged.
+            let region = screencopy.region();
+            if let Some(damage) = frame_result.damage.clone() {
+                screencopy.damage(&damage);
+            }
+
+            let shm_buffer = screencopy.buffer();
+
+            // Ignore unknown buffer types.
+            let buffer_type = renderer::buffer_type(shm_buffer);
+            if !matches!(buffer_type, Some(BufferType::Shm)) {
+                warn!("Unsupported buffer type: {:?}", buffer_type);
+            } else {
+                // Create and bind an offscreen render buffer.
+                let buffer_dimensions = renderer::buffer_dimensions(shm_buffer).unwrap();
+                let offscreen_buffer = Offscreen::<GlesTexture>::create_buffer(
+                    renderer,
+                    Fourcc::Argb8888,
+                    buffer_dimensions,
+                )
+                .unwrap();
+                renderer.bind(offscreen_buffer).unwrap();
+
+                let output = &screencopy.output;
+                let scale = output.current_scale().fractional_scale();
+                let output_size = output.current_mode().unwrap().size;
+                let transform = output.current_transform();
+
+                // Calculate drawing area after output transform.
+                let damage = transform.transform_rect_in(region, &output_size);
+
+                frame_result
+                    .blit_frame_result(damage.size, transform, scale, renderer, [damage], [])
+                    .unwrap();
+
+                let region = Rectangle {
+                    loc: Point::from((region.loc.x, region.loc.y)),
+                    size: Size::from((region.size.w, region.size.h)),
+                };
+                let mapping = renderer.copy_framebuffer(region, Fourcc::Argb8888).unwrap();
+                let buffer = renderer.map_texture(&mapping);
+                // shm_buffer.
+                // Copy offscreen buffer's content to the SHM buffer.
+                shm::with_buffer_contents_mut(
+                    shm_buffer,
+                    |shm_buffer_ptr, shm_len, buffer_data| {
+                        // Ensure SHM buffer is in an acceptable format.
+                        if dbg!(buffer_data.format) != wl_shm::Format::Argb8888
+                            || buffer_data.stride != region.size.w * 4
+                            || buffer_data.height != region.size.h
+                            || shm_len as i32 != buffer_data.stride * buffer_data.height
+                        {
+                            error!("Invalid buffer format");
+                            return;
+                        }
+
+                        // Copy the offscreen buffer's content to the SHM buffer.
+                        unsafe { shm_buffer_ptr.copy_from(buffer.unwrap().as_ptr(), shm_len) };
+                    },
+                )
+                .unwrap();
+            }
+            // Mark screencopy frame as successful.
+            screencopy.submit();
+        }
+    }
 
     post_repaint(
         output,
@@ -1856,7 +1971,7 @@ pub fn take_presentation_feedback(
 
 fn initial_render(
     surface: &mut Surface,
-    renderer: &mut UdevRenderer<'_, '_>,
+    renderer: &mut UdevRenderer<'_, '_, '_>,
 ) -> Result<(), SwapBuffersError> {
     surface
         .compositor
@@ -1866,3 +1981,23 @@ fn initial_render(
 
     Ok(())
 }
+
+impl ScreencopyHandler for Buddaraysh<UdevData> {
+    fn output(&mut self, output: &WlOutput) -> &Output {
+        self.space.outputs().find(|o| o.owns(output)).unwrap()
+    }
+
+    fn frame(&mut self, frame: Screencopy) {
+        for (node, device) in &self.backend_data.backends {
+            for (crtc, surface) in &device.surfaces {
+                if surface.output == frame.output {
+                    info!("rendering screencopy frame");
+                    self.render(*node, Some(*crtc), Some(frame));
+                    return;
+                }
+            }
+        }
+    }
+}
+
+delegate_screencopy_manager!(Buddaraysh<UdevData>);

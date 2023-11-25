@@ -5,6 +5,7 @@ mod cursor;
 mod drawing;
 mod grabs;
 mod input;
+mod protocols;
 mod render;
 mod state;
 pub mod udev;
