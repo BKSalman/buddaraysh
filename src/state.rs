@@ -29,7 +29,7 @@ use smithay::{
             data_device::DataDeviceState,
             primary_selection::{PrimarySelectionHandler, PrimarySelectionState},
         },
-        shell::xdg::XdgShellState,
+        shell::{wlr_layer::WlrLayerShellState, xdg::XdgShellState},
         shm::ShmState,
         socket::ListeningSocketSource,
     },
@@ -53,6 +53,7 @@ pub struct Buddaraysh<BackendData: Backend + 'static> {
     // Smithay State
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
+    pub wlr_layer_shell_state: WlrLayerShellState,
     pub shm_state: ShmState,
     pub primary_selection_state: PrimarySelectionState,
     pub output_manager_state: OutputManagerState,
@@ -82,6 +83,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
 
         let compositor_state = CompositorState::new::<Self>(&dh);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
+        let wlr_layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
@@ -143,6 +145,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             seat_name,
             running: Arc::new(AtomicBool::new(true)),
             primary_selection_state,
+            wlr_layer_shell_state,
         }
     }
 
