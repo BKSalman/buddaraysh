@@ -21,10 +21,10 @@ pub fn logging() {
         tracing::info!(
             "no log level specified, defaulting to debug level for ytdlp_gui crate only"
         );
-        std::env::set_var("BUD_LOG", "none,ytdlp_gui=debug");
+        std::env::set_var("BUD_LOG", "none,buddaraysh=debug");
     }
 
-    let home_dir = env!("HOME");
+    let home_dir = std::env::var("HOME").expect("HOME should always be set");
     let logs_dir = PathBuf::from(home_dir).join(".cache/buddaraysh/logs/");
 
     // Log all `tracing` events to files prefixed with `debug`. Since these
