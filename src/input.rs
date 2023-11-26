@@ -4,7 +4,7 @@ use smithay::{
     backend::{
         input::{
             AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
-            KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
+            KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
         },
         session::Session,
     },
@@ -171,19 +171,24 @@ impl Buddaraysh<UdevData> {
                     serial,
                     time,
                     |_, modifiers, handle| {
+                        let state = event.state();
                         let keysym = handle.modified_sym();
 
-                        if modifiers.logo && keysym == Keysym::Q {
-                            return FilterResult::Intercept(Command::Spawn("kitty"));
-                        } else if modifiers.logo && modifiers.shift && keysym == Keysym::X {
-                            return FilterResult::Intercept(Command::Quit);
-                        } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12)
-                            .contains(&keysym.raw())
-                        {
-                            // VTSwitch
-                            return FilterResult::Intercept(Command::SwitchVT(
-                                (keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32,
-                            ));
+                        if state == KeyState::Pressed {
+                            if modifiers.logo && keysym == Keysym::q {
+                                return FilterResult::Intercept(Command::Spawn("kitty"));
+                            } else if modifiers.logo && keysym == Keysym::d {
+                                return FilterResult::Intercept(Command::Spawn("rofi"));
+                            } else if modifiers.logo && modifiers.shift && keysym == Keysym::X {
+                                return FilterResult::Intercept(Command::Quit);
+                            } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12)
+                                .contains(&keysym.raw())
+                            {
+                                // VTSwitch
+                                return FilterResult::Intercept(Command::SwitchVT(
+                                    (keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32,
+                                ));
+                            }
                         }
 
                         FilterResult::Forward

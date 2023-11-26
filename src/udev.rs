@@ -479,7 +479,6 @@ impl DrmLeaseHandler for Buddaraysh<UdevData> {
         backend.active_leases.retain(|l| l.id() != lease);
     }
 }
-
 delegate_drm_lease!(Buddaraysh<UdevData>);
 
 pub type RenderSurface =
