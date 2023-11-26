@@ -5,8 +5,16 @@ use smithay::{
     desktop::layer_map_for_output,
     output::Output,
     reexports::wayland_server::protocol::wl_output::WlOutput,
-    wayland::shell::wlr_layer::{Layer as WlrLayer, LayerSurface, WlrLayerShellHandler},
+    utils::SERIAL_COUNTER,
+    wayland::{
+        compositor::with_states,
+        shell::wlr_layer::{
+            KeyboardInteractivity, Layer as WlrLayer, LayerSurface, LayerSurfaceCachedState,
+            WlrLayerShellHandler,
+        },
+    },
 };
+use tracing::debug;
 
 use crate::{Backend, Buddaraysh};
 
@@ -18,18 +26,28 @@ impl<BackendData: Backend + 'static> WlrLayerShellHandler for Buddaraysh<Backend
     fn new_layer_surface(
         &mut self,
         surface: LayerSurface,
-        output: Option<WlOutput>,
+        wl_output: Option<WlOutput>,
         _layer: WlrLayer,
         namespace: String,
     ) {
-        let output = output
+        let output = wl_output
             .as_ref()
             .and_then(Output::from_resource)
             .unwrap_or_else(|| self.space.outputs().next().unwrap().clone());
-        let mut map = layer_map_for_output(&output);
         let layer_surface = smithay::desktop::LayerSurface::new(surface, namespace);
-        map.map_layer(&layer_surface).unwrap();
-        // drop(map);
+
+        {
+            let mut map = layer_map_for_output(&output);
+            map.map_layer(&layer_surface).unwrap();
+        }
+
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            keyboard.set_focus(
+                self,
+                Some(layer_surface.clone().into()),
+                SERIAL_COUNTER.next_serial(),
+            );
+        }
     }
 
     fn layer_destroyed(&mut self, surface: LayerSurface) {

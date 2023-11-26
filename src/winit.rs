@@ -75,7 +75,6 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<CalloopData<WinitData>> = EventLoop::try_new()?;
     let display: Display<Buddaraysh<WinitData>> = Display::new()?;
     let display_handle = display.handle();
-    info!("lmao");
 
     #[cfg_attr(not(feature = "egl"), allow(unused_mut))]
     let (mut backend, winit) = match winit::init::<GlesRenderer>() {

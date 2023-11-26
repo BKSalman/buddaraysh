@@ -1,6 +1,5 @@
-use crate::{Backend, Buddaraysh};
+use crate::{focus::FocusTarget, window::WindowElement, Backend, Buddaraysh};
 use smithay::{
-    desktop::Window,
     input::pointer::{
         AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
         GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
@@ -13,7 +12,7 @@ use smithay::{
 
 pub struct MoveSurfaceGrab<BackendData: Backend + 'static> {
     pub start_data: PointerGrabStartData<Buddaraysh<BackendData>>,
-    pub window: Window,
+    pub window: WindowElement,
     pub initial_window_location: Point<i32, Logical>,
 }
 
@@ -24,7 +23,7 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
         &mut self,
         data: &mut Buddaraysh<BackendData>,
         handle: &mut PointerInnerHandle<'_, Buddaraysh<BackendData>>,
-        _focus: Option<(WlSurface, Point<i32, Logical>)>,
+        _focus: Option<(FocusTarget, Point<i32, Logical>)>,
         event: &MotionEvent,
     ) {
         // While the grab is active, no client has pointer focus
@@ -40,7 +39,7 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
         &mut self,
         data: &mut Buddaraysh<BackendData>,
         handle: &mut PointerInnerHandle<'_, Buddaraysh<BackendData>>,
-        focus: Option<(WlSurface, Point<i32, Logical>)>,
+        focus: Option<(FocusTarget, Point<i32, Logical>)>,
         event: &RelativeMotionEvent,
     ) {
         handle.relative_motion(data, focus, event);

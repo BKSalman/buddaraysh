@@ -2,16 +2,18 @@ use std::path::PathBuf;
 
 use buddaraysh::{udev::run_udev, winit::run_winit};
 use tracing::Level;
-use tracing_subscriber::{
-    filter::LevelFilter, fmt::writer::MakeWriterExt, prelude::__tracing_subscriber_SubscriberExt,
-    util::SubscriberInitExt, EnvFilter,
-};
+use tracing_subscriber::{filter::LevelFilter, prelude::*, EnvFilter};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     logging();
 
-    run_udev()?;
-    // run_winit()?;
+    match std::env::var("BUD_BACKEND")
+        .unwrap_or(String::from("udev"))
+        .as_str()
+    {
+        "winit" => run_winit()?,
+        _ => run_udev()?,
+    }
 
     Ok(())
 }
@@ -23,6 +25,8 @@ pub fn logging() {
         );
         std::env::set_var("BUD_LOG", "none,buddaraysh=debug");
     }
+
+    let journald_layer = tracing_journald::layer().expect("journald should be running");
 
     let home_dir = std::env::var("HOME").expect("HOME should always be set");
     let logs_dir = PathBuf::from(home_dir).join(".cache/buddaraysh/logs/");
@@ -55,5 +59,6 @@ pub fn logging() {
             tracing_subscriber::fmt::Layer::default()
                 .with_writer(std::io::stdout.with_max_level(Level::DEBUG)),
         )
+        .with(journald_layer)
         .init();
 }

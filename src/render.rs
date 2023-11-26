@@ -24,7 +24,10 @@ use smithay::{
 
 #[cfg(feature = "debug")]
 use crate::drawing::FpsElement;
-use crate::drawing::{PointerRenderElement, CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN};
+use crate::{
+    drawing::{PointerRenderElement, CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN},
+    window::{WindowElement, WindowRenderElement},
+};
 
 smithay::backend::renderer::element::render_elements! {
     pub CustomRenderElements<R> where
@@ -140,11 +143,11 @@ impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug>
 #[profiling::function]
 pub fn output_elements<R>(
     output: &Output,
-    space: &Space<Window>,
+    space: &Space<WindowElement>,
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
     renderer: &mut R,
 ) -> (
-    Vec<OutputRenderElements<R, WaylandSurfaceRenderElement<R>>>,
+    Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
     [f32; 4],
 )
 where
@@ -160,7 +163,7 @@ where
     //     output_render_elements.extend(space_preview_elements(renderer, space, output));
     // }
 
-    let space_elements = smithay::desktop::space::space_render_elements::<_, Window, _>(
+    let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(
         renderer,
         [space],
         output,
@@ -175,7 +178,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn render_output<R>(
     output: &Output,
-    space: &Space<Window>,
+    space: &Space<WindowElement>,
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
     renderer: &mut R,
     damage_tracker: &mut OutputDamageTracker,

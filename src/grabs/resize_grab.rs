@@ -1,6 +1,6 @@
-use crate::{Backend, Buddaraysh};
+use crate::{focus::FocusTarget, window::WindowElement, Backend, Buddaraysh};
 use smithay::{
-    desktop::{Space, Window},
+    desktop::{space::SpaceElement, Space},
     input::pointer::{
         AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
         GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
@@ -40,39 +40,13 @@ impl From<xdg_toplevel::ResizeEdge> for ResizeEdge {
 }
 
 pub struct ResizeSurfaceGrab<BackendData: Backend + 'static> {
-    start_data: PointerGrabStartData<Buddaraysh<BackendData>>,
-    window: Window,
+    pub start_data: PointerGrabStartData<Buddaraysh<BackendData>>,
+    pub window: WindowElement,
 
-    edges: ResizeEdge,
+    pub edges: ResizeEdge,
 
-    initial_rect: Rectangle<i32, Logical>,
-    last_window_size: Size<i32, Logical>,
-}
-
-impl<BackendData: Backend + 'static> ResizeSurfaceGrab<BackendData> {
-    pub fn start(
-        start_data: PointerGrabStartData<Buddaraysh<BackendData>>,
-        window: Window,
-        edges: ResizeEdge,
-        initial_window_rect: Rectangle<i32, Logical>,
-    ) -> Self {
-        let initial_rect = initial_window_rect;
-
-        ResizeSurfaceState::with(window.toplevel().wl_surface(), |state| {
-            *state = ResizeSurfaceState::Resizing {
-                edges,
-                initial_rect,
-            };
-        });
-
-        Self {
-            start_data,
-            window,
-            edges,
-            initial_rect,
-            last_window_size: initial_rect.size,
-        }
-    }
+    pub initial_rect: Rectangle<i32, Logical>,
+    pub last_window_size: Size<i32, Logical>,
 }
 
 impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
@@ -82,7 +56,7 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
         &mut self,
         data: &mut Buddaraysh<BackendData>,
         handle: &mut PointerInnerHandle<'_, Buddaraysh<BackendData>>,
-        _focus: Option<(WlSurface, Point<i32, Logical>)>,
+        _focus: Option<(FocusTarget, Point<i32, Logical>)>,
         event: &MotionEvent,
     ) {
         // While the grab is active, no client has pointer focus
@@ -109,11 +83,14 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
             new_window_height = (self.initial_rect.size.h as f64 + delta.y) as i32;
         }
 
-        let (min_size, max_size) =
-            compositor::with_states(self.window.toplevel().wl_surface(), |states| {
+        let (min_size, max_size) = if let Some(surface) = self.window.wl_surface() {
+            compositor::with_states(&surface, |states| {
                 let data = states.cached_state.current::<SurfaceCachedState>();
                 (data.min_size, data.max_size)
-            });
+            })
+        } else {
+            ((0, 0).into(), (0, 0).into())
+        };
 
         let min_width = min_size.w.max(1);
         let min_height = min_size.h.max(1);
@@ -126,20 +103,32 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
             new_window_height.max(min_height).min(max_height),
         ));
 
-        let xdg = self.window.toplevel();
-        xdg.with_pending_state(|state| {
-            state.states.set(xdg_toplevel::State::Resizing);
-            state.size = Some(self.last_window_size);
-        });
-
-        xdg.send_pending_configure();
+        match &self.window {
+            WindowElement::Wayland(w) => {
+                let xdg = w.toplevel();
+                xdg.with_pending_state(|state| {
+                    state.states.set(xdg_toplevel::State::Resizing);
+                    state.size = Some(self.last_window_size);
+                });
+                xdg.send_pending_configure();
+            }
+            #[cfg(feature = "xwayland")]
+            WindowElement::X11(x11) => {
+                let location = data.space.element_location(&self.window).unwrap();
+                x11.configure(Rectangle::from_loc_and_size(
+                    location,
+                    self.last_window_size,
+                ))
+                .unwrap();
+            }
+        }
     }
 
     fn relative_motion(
         &mut self,
         data: &mut Buddaraysh<BackendData>,
         handle: &mut PointerInnerHandle<'_, Buddaraysh<BackendData>>,
-        focus: Option<(WlSurface, Point<i32, Logical>)>,
+        focus: Option<(FocusTarget, Point<i32, Logical>)>,
         event: &RelativeMotionEvent,
     ) {
         handle.relative_motion(data, focus, event);
@@ -160,21 +149,44 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
         if !handle.current_pressed().contains(&BTN_LEFT) {
             // No more buttons are pressed, release the grab.
             handle.unset_grab(data, event.serial, event.time, true);
+            match &self.window {
+                WindowElement::Wayland(w) => {
+                    let xdg = w.toplevel();
+                    xdg.with_pending_state(|state| {
+                        state.states.unset(xdg_toplevel::State::Resizing);
+                        state.size = Some(self.last_window_size);
+                    });
 
-            let xdg = self.window.toplevel();
-            xdg.with_pending_state(|state| {
-                state.states.unset(xdg_toplevel::State::Resizing);
-                state.size = Some(self.last_window_size);
-            });
+                    xdg.send_pending_configure();
 
-            xdg.send_pending_configure();
+                    ResizeSurfaceState::with(xdg.wl_surface(), |state| {
+                        *state = ResizeSurfaceState::WaitingForLastCommit {
+                            edges: self.edges,
+                            initial_rect: self.initial_rect,
+                        };
+                    });
+                }
+                #[cfg(feature = "xwayland")]
+                WindowElement::X11(x11) => {
+                    let location = data.space.element_location(&self.window).unwrap();
+                    x11.configure(Rectangle::from_loc_and_size(
+                        location,
+                        self.last_window_size,
+                    ))
+                    .unwrap();
 
-            ResizeSurfaceState::with(xdg.wl_surface(), |state| {
-                *state = ResizeSurfaceState::WaitingForLastCommit {
-                    edges: self.edges,
-                    initial_rect: self.initial_rect,
-                };
-            });
+                    let Some(surface) = self.window.wl_surface() else {
+                        // X11 Window got unmapped, abort
+                        return;
+                    };
+                    ResizeSurfaceState::with(&surface, |state| {
+                        *state = ResizeSurfaceState::WaitingForLastCommit {
+                            edges: self.edges,
+                            initial_rect: self.initial_rect,
+                        };
+                    });
+                }
+            }
         }
     }
 
@@ -277,7 +289,7 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
 /// It is stored inside of WlSurface,
 /// and can be accessed using [`ResizeSurfaceState::with`]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
-enum ResizeSurfaceState {
+pub enum ResizeSurfaceState {
     #[default]
     Idle,
     Resizing {
@@ -327,10 +339,10 @@ impl ResizeSurfaceState {
 }
 
 /// Should be called on `WlSurface::commit`
-pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<()> {
+pub fn handle_commit(space: &mut Space<WindowElement>, surface: &WlSurface) -> Option<()> {
     let window = space
         .elements()
-        .find(|w| w.toplevel().wl_surface() == surface)
+        .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
         .cloned()?;
 
     let mut window_loc = space.element_location(&window)?;

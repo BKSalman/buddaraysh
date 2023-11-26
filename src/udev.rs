@@ -1,3 +1,5 @@
+#[cfg(feature = "xwayland")]
+use std::ffi::OsString;
 use std::{
     collections::{HashMap, HashSet},
     io,
@@ -56,7 +58,6 @@ use smithay::{
             surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
             update_surface_primary_scanout_output, OutputPresentationFeedback,
         },
-        Window,
     },
     input::pointer::{CursorImageAttributes, CursorImageStatus},
     output::{Mode as WlMode, Output, PhysicalProperties, Subpixel},
@@ -113,6 +114,7 @@ use crate::{
     drawing::{PointerElement, CLEAR_COLOR},
     protocols::screencopy::{frame::Screencopy, ScreencopyHandler, ScreencopyManagerState},
     render::{output_elements, CustomRenderElements},
+    window::WindowElement,
     Backend, Buddaraysh, CalloopData,
 };
 
@@ -772,34 +774,19 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
 
     std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
 
-    // let mut args = std::env::args().skip(1);
-    // let flag = args.next();
-    // let arg = args.next();
-
-    // match (flag.as_deref(), arg) {
-    //     (Some("-c") | Some("--command"), Some(command)) => {
-    //         std::process::Command::new(command).spawn().ok();
-    //     }
-    //     _ => {
-    //         std::process::Command::new("kitty").spawn().ok();
-    //     }
-    // }
-
-    std::process::Command::new("kitty").spawn().ok();
-
     /*
      * Start XWayland if supported
      */
-    // #[cfg(feature = "xwayland")]
-    // if let Err(e) = state.xwayland.start(
-    //     state.loop_handle.clone(),
-    //     None,
-    //     std::iter::empty::<(OsString, OsString)>(),
-    //     true,
-    //     |_| {},
-    // ) {
-    //     error!("Failed to start XWayland: {}", e);
-    // }
+    #[cfg(feature = "xwayland")]
+    if let Err(e) = state.xwayland.start(
+        state.loop_handle.clone(),
+        None,
+        std::iter::empty::<(OsString, OsString)>(),
+        true,
+        |_| {},
+    ) {
+        error!("Failed to start XWayland: {}", e);
+    }
 
     /*
      * And run our loop
@@ -1675,7 +1662,7 @@ fn get_surface_dmabuf_feedback(
 fn render_surface<'a, 'b, 'c>(
     surface: &'a mut Surface,
     renderer: &mut UdevRenderer<'a, 'b, 'c>,
-    space: &Space<Window>,
+    space: &Space<WindowElement>,
     output: &Output,
     pointer_location: Point<f64, Logical>,
     pointer_image: &TextureBuffer<MultiTexture>,
@@ -1788,7 +1775,8 @@ fn render_surface<'a, 'b, 'c>(
 
                 frame_result
                     .blit_frame_result(damage.size, transform, scale, renderer, [damage], [])
-                    .unwrap();
+                    .unwrap()
+                    .wait();
 
                 let region = Rectangle {
                     loc: Point::from((region.loc.x, region.loc.y)),
@@ -1857,7 +1845,7 @@ pub struct SurfaceDmabufFeedback<'a> {
 pub fn post_repaint(
     output: &Output,
     render_element_states: &RenderElementStates,
-    space: &Space<Window>,
+    space: &Space<WindowElement>,
     dmabuf_feedback: Option<SurfaceDmabufFeedback<'_>>,
     time: impl Into<Duration>,
 ) {
@@ -1938,7 +1926,7 @@ pub fn post_repaint(
 #[profiling::function]
 pub fn take_presentation_feedback(
     output: &Output,
-    space: &Space<Window>,
+    space: &Space<WindowElement>,
     render_element_states: &RenderElementStates,
 ) -> OutputPresentationFeedback {
     let mut output_presentation_feedback = OutputPresentationFeedback::new(output);

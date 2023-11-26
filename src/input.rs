@@ -1,4 +1,4 @@
-use std::sync::atomic::Ordering;
+use std::{process::Stdio, sync::atomic::Ordering};
 
 use smithay::{
     backend::{
@@ -8,6 +8,7 @@ use smithay::{
         },
         session::Session,
     },
+    desktop::{layer_map_for_output, space::SpaceElement, WindowSurfaceType},
     input::{
         keyboard::{keysyms as xkb, FilterResult, Keysym},
         pointer::{AxisFrame, ButtonEvent, MotionEvent, RelativeMotionEvent},
@@ -17,11 +18,14 @@ use smithay::{
     wayland::{
         pointer_constraints::{with_pointer_constraint, PointerConstraint},
         seat::WaylandFocus,
+        shell::wlr_layer::Layer as WlrLayer,
     },
 };
 use tracing::{debug, error, info};
 
-use crate::{commands::Command, state::Buddaraysh, udev::UdevData, winit::WinitData};
+use crate::{
+    commands::Command, state::Buddaraysh, udev::UdevData, window::WindowElement, winit::WinitData,
+};
 
 impl Buddaraysh<WinitData> {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
@@ -81,20 +85,20 @@ impl Buddaraysh<WinitData> {
                         .map(|(w, l)| (w.clone(), l))
                     {
                         self.space.raise_element(&window, true);
-                        keyboard.set_focus(
-                            self,
-                            Some(window.toplevel().wl_surface().clone()),
-                            serial,
-                        );
+                        keyboard.set_focus(self, Some(window.into()), serial);
                         self.space.elements().for_each(|window| {
-                            window.toplevel().send_pending_configure();
+                            if let WindowElement::Wayland(window) = window {
+                                window.toplevel().send_pending_configure();
+                            }
                         });
                     } else {
                         self.space.elements().for_each(|window| {
-                            window.set_activated(false);
-                            window.toplevel().send_pending_configure();
+                            if let WindowElement::Wayland(window) = window {
+                                window.set_activated(false);
+                                window.toplevel().send_pending_configure();
+                            }
                         });
-                        keyboard.set_focus(self, Option::<WlSurface>::None, serial);
+                        keyboard.set_focus(self, None, serial);
                     }
                 };
 
@@ -178,7 +182,9 @@ impl Buddaraysh<UdevData> {
                             if modifiers.logo && keysym == Keysym::q {
                                 return FilterResult::Intercept(Command::Spawn("kitty"));
                             } else if modifiers.logo && keysym == Keysym::d {
-                                return FilterResult::Intercept(Command::Spawn("rofi"));
+                                return FilterResult::Intercept(Command::Spawn(
+                                    "pkill rofi || ~/.config/rofi/launcher.sh",
+                                ));
                             } else if modifiers.logo && modifiers.shift && keysym == Keysym::X {
                                 return FilterResult::Intercept(Command::Quit);
                             } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12)
@@ -204,7 +210,33 @@ impl Buddaraysh<UdevData> {
                             }
                         }
                         Command::Spawn(program) => {
-                            std::process::Command::new(program).spawn().ok();
+                            match std::process::Command::new("sh")
+                                .arg("-c")
+                                .arg(&program)
+                                .stdin(Stdio::null())
+                                .stdout(Stdio::null())
+                                .envs(
+                                    [self.socket_name.clone()]
+                                        .into_iter()
+                                        .map(|v| {
+                                            ("WAYLAND_DISPLAY", v.to_string_lossy().to_string())
+                                        })
+                                        .into_iter()
+                                        .chain(
+                                            #[cfg(feature = "xwayland")]
+                                            self.xdisplay.map(|v| ("DISPLAY", format!(":{}", v))),
+                                            #[cfg(not(feature = "xwayland"))]
+                                            None,
+                                        ),
+                                )
+                                .spawn()
+                            {
+                                Ok(_child) => {
+                                    // TODO: keep track of children processes
+                                }
+                                Err(e) => error!("Failed to run command: {e}"),
+                            }
+                            // self.children.insert(child);
                         }
                         Command::Quit => {
                             info!("Quitting.");
@@ -370,26 +402,107 @@ impl Buddaraysh<UdevData> {
                 let button_state = event.state();
 
                 if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
+                    let output = self
+                        .space
+                        .output_under(self.pointer.current_location())
+                        .next()
+                        .cloned();
+
+                    if let Some(output) = output.as_ref() {
+                        let output_geo = self.space.output_geometry(output).unwrap();
+                        // if let Some(window) = output
+                        //     .user_data()
+                        //     .get::<FullscreenSurface>()
+                        //     .and_then(|f| f.get())
+                        // {
+                        //     if let Some((_, _)) = window.surface_under(
+                        //         self.pointer.current_location() - output_geo.loc.to_f64(),
+                        //         WindowSurfaceType::ALL,
+                        //     ) {
+                        //         #[cfg(feature = "xwayland")]
+                        //         if let WindowElement::X11(surf) = &window {
+                        //             self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
+                        //         }
+                        //         keyboard.set_focus(self, Some(window.into()), serial);
+                        //         return;
+                        //     }
+                        // }
+
+                        let layers = layer_map_for_output(output);
+                        if let Some(layer) = layers
+                            .layer_under(WlrLayer::Overlay, self.pointer.current_location())
+                            .or_else(|| {
+                                layers.layer_under(WlrLayer::Top, self.pointer.current_location())
+                            })
+                        {
+                            if layer.can_receive_keyboard_focus() {
+                                if let Some((_, _)) = layer.surface_under(
+                                    self.pointer.current_location()
+                                        - output_geo.loc.to_f64()
+                                        - layers.layer_geometry(layer).unwrap().loc.to_f64(),
+                                    WindowSurfaceType::ALL,
+                                ) {
+                                    keyboard.set_focus(self, Some(layer.clone().into()), serial);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+
                     if let Some((window, _loc)) = self
                         .space
                         .element_under(pointer.current_location())
                         .map(|(w, l)| (w.clone(), l))
                     {
+                        debug!("raising window: {window:#?}");
                         self.space.raise_element(&window, true);
-                        keyboard.set_focus(
-                            self,
-                            Some(window.toplevel().wl_surface().clone()),
-                            serial,
-                        );
+                        keyboard.set_focus(self, Some(window.clone().into()), serial);
                         self.space.elements().for_each(|window| {
-                            window.toplevel().send_pending_configure();
+                            if let WindowElement::Wayland(window) = window {
+                                window.toplevel().send_pending_configure();
+                            }
                         });
+                        #[cfg(feature = "xwayland")]
+                        if let WindowElement::X11(surf) = &window {
+                            self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
+                        }
                     } else {
                         self.space.elements().for_each(|window| {
-                            window.set_activated(false);
-                            window.toplevel().send_pending_configure();
+                            window.set_activate(false);
+                            if let WindowElement::Wayland(window) = window {
+                                window.toplevel().send_pending_configure();
+                            }
                         });
-                        keyboard.set_focus(self, Option::<WlSurface>::None, serial);
+                        keyboard.set_focus(self, None, serial);
+
+                        if let Some(output) = output.as_ref() {
+                            let output_geo = self.space.output_geometry(output).unwrap();
+                            let layers = layer_map_for_output(output);
+                            if let Some(layer) = layers
+                                .layer_under(WlrLayer::Bottom, self.pointer.current_location())
+                                .or_else(|| {
+                                    layers.layer_under(
+                                        WlrLayer::Background,
+                                        self.pointer.current_location(),
+                                    )
+                                })
+                            {
+                                if layer.can_receive_keyboard_focus() {
+                                    if let Some((_, _)) = layer.surface_under(
+                                        self.pointer.current_location()
+                                            - output_geo.loc.to_f64()
+                                            - layers.layer_geometry(layer).unwrap().loc.to_f64(),
+                                        WindowSurfaceType::ALL,
+                                    ) {
+                                        keyboard.set_focus(
+                                            self,
+                                            Some(layer.clone().into()),
+                                            serial,
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                 };
 

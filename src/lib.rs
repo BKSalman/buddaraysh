@@ -3,12 +3,16 @@ mod handlers;
 mod commands;
 mod cursor;
 mod drawing;
+mod focus;
 mod grabs;
 mod input;
 mod protocols;
 mod render;
+mod shell;
+mod ssd;
 mod state;
 pub mod udev;
+mod window;
 pub mod winit;
 
 use smithay::{

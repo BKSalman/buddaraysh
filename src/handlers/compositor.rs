@@ -1,10 +1,10 @@
-use std::cell::RefCell;
-
-use crate::{grabs::resize_grab, state::ClientState, Backend, Buddaraysh};
+use crate::{
+    grabs::resize_grab, state::ClientState, window::WindowElement, Backend, Buddaraysh, CalloopData,
+};
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     delegate_compositor, delegate_shm,
-    desktop::{layer_map_for_output, PopupKind, PopupManager, Space, Window, WindowSurfaceType},
+    desktop::{layer_map_for_output, PopupKind, PopupManager, Space, WindowSurfaceType},
     reexports::{
         calloop::Interest,
         wayland_server::{
@@ -16,17 +16,17 @@ use smithay::{
         buffer::BufferHandler,
         compositor::{
             add_blocker, add_pre_commit_hook, get_parent, is_sync_subsurface, with_states,
-            with_surface_tree_upward, BufferAssignment, CompositorClientState, CompositorHandler,
-            CompositorState, SurfaceAttributes, TraversalAction,
+            BufferAssignment, CompositorClientState, CompositorHandler, CompositorState,
+            SurfaceAttributes,
         },
         dmabuf::get_dmabuf,
-        seat::WaylandFocus,
         shell::{
             wlr_layer::LayerSurfaceData,
             xdg::{XdgPopupSurfaceData, XdgToplevelSurfaceData},
         },
         shm::{ShmHandler, ShmState},
     },
+    xwayland::{X11Wm, XWaylandClientData},
 };
 
 use super::xdg_shell;
@@ -37,7 +37,14 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
     }
 
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        &client.get_data::<ClientState>().unwrap().compositor_state
+        #[cfg(feature = "xwayland")]
+        if let Some(state) = client.get_data::<XWaylandClientData>() {
+            return &state.compositor_state;
+        }
+        if let Some(state) = client.get_data::<ClientState>() {
+            return &state.compositor_state;
+        }
+        panic!("Unknown client data type")
     }
 
     fn new_surface(&mut self, surface: &WlSurface) {
@@ -71,6 +78,9 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
     }
 
     fn commit(&mut self, surface: &WlSurface) {
+        #[cfg(feature = "xwayland")]
+        X11Wm::commit_hook::<CalloopData<BackendData>>(surface);
+
         on_commit_buffer_handler::<Self>(surface);
         self.backend_data.early_import(surface);
 
@@ -79,12 +89,16 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
             while let Some(parent) = get_parent(&root) {
                 root = parent;
             }
-            if let Some(window) = self
-                .space
-                .elements()
-                .find(|w| w.toplevel().wl_surface() == &root)
-            {
-                window.on_commit();
+            if let Some(window) = self.space.elements().find(|w| match w {
+                crate::window::WindowElement::Wayland(w) => w.toplevel().wl_surface() == &root,
+                #[cfg(feature = "xwayland")]
+                crate::window::WindowElement::X11(w) => false,
+            }) {
+                match window {
+                    crate::window::WindowElement::Wayland(w) => w.on_commit(),
+                    #[cfg(feature = "xwayland")]
+                    crate::window::WindowElement::X11(w) => {}
+                }
             }
         };
 
@@ -108,7 +122,31 @@ impl<BackendData: Backend + 'static> ShmHandler for Buddaraysh<BackendData> {
 delegate_compositor!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 delegate_shm!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 
-fn ensure_initial_configure(surface: &WlSurface, space: &Space<Window>, popups: &mut PopupManager) {
+// TODO:
+// #[derive(Default)]
+// pub struct SurfaceData {
+//     pub geometry: Option<Rectangle<i32, Logical>>,
+//     pub resize_state: ResizeState,
+// }
+
+fn ensure_initial_configure(
+    surface: &WlSurface,
+    space: &Space<WindowElement>,
+    popups: &mut PopupManager,
+) {
+    // TODO:
+    // with_surface_tree_upward(
+    //     surface,
+    //     (),
+    //     |_, _, _| TraversalAction::DoChildren(()),
+    //     |_, states, _| {
+    //         states
+    //             .data_map
+    //             .insert_if_missing(|| RefCell::new(SurfaceData::default()));
+    //     },
+    //     |_, _, _| true,
+    // );
+
     if let Some(window) = space
         .elements()
         .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
@@ -116,7 +154,7 @@ fn ensure_initial_configure(surface: &WlSurface, space: &Space<Window>, popups: 
     {
         // send the initial configure if relevant
         #[cfg_attr(not(feature = "xwayland"), allow(irrefutable_let_patterns))]
-        {
+        if let WindowElement::Wayland(ref toplevel) = window {
             let initial_configure_sent = with_states(surface, |states| {
                 states
                     .data_map
@@ -127,9 +165,23 @@ fn ensure_initial_configure(surface: &WlSurface, space: &Space<Window>, popups: 
                     .initial_configure_sent
             });
             if !initial_configure_sent {
-                window.toplevel().send_configure();
+                toplevel.toplevel().send_configure();
             }
         }
+
+        // TODO:
+        // with_states(surface, |states| {
+        //     let mut data = states
+        //         .data_map
+        //         .get::<RefCell<SurfaceData>>()
+        //         .unwrap()
+        //         .borrow_mut();
+
+        //     // Finish resizing.
+        //     if let ResizeState::WaitingForCommit(_) = data.resize_state {
+        //         data.resize_state = ResizeState::NotResizing;
+        //     }
+        // });
 
         return;
     }
