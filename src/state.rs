@@ -4,7 +4,7 @@ use std::{
 };
 
 use smithay::{
-    delegate_presentation, delegate_primary_selection,
+    delegate_data_control, delegate_presentation, delegate_primary_selection,
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
     input::{
         pointer::{CursorImageStatus, PointerHandle},
@@ -28,6 +28,7 @@ use smithay::{
         selection::{
             data_device::DataDeviceState,
             primary_selection::{PrimarySelectionHandler, PrimarySelectionState},
+            wlr_data_control::{DataControlHandler, DataControlState},
         },
         shell::{wlr_layer::WlrLayerShellState, xdg::XdgShellState},
         shm::ShmState,
@@ -54,6 +55,7 @@ pub struct Buddaraysh<BackendData: Backend + 'static> {
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
     pub wlr_layer_shell_state: WlrLayerShellState,
+    pub data_control_state: DataControlState,
     pub shm_state: ShmState,
     pub primary_selection_state: PrimarySelectionState,
     pub output_manager_state: OutputManagerState,
@@ -84,9 +86,11 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         let compositor_state = CompositorState::new::<Self>(&dh);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
         let wlr_layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
+        let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
+        let data_control_state =
+            DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |_| true);
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
-        let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
         let mut seat_state = SeatState::new();
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let popups = PopupManager::default();
@@ -146,6 +150,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             running: Arc::new(AtomicBool::new(true)),
             primary_selection_state,
             wlr_layer_shell_state,
+            data_control_state,
         }
     }
 
@@ -217,6 +222,15 @@ impl<BackendData: Backend> PrimarySelectionHandler for Buddaraysh<BackendData> {
 delegate_primary_selection!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 
 delegate_presentation!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
+
+impl<BackendData: Backend> DataControlHandler for Buddaraysh<BackendData> {
+    fn data_control_state(
+        &self,
+    ) -> &smithay::wayland::selection::wlr_data_control::DataControlState {
+        &self.data_control_state
+    }
+}
+delegate_data_control!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 
 #[derive(Default)]
 pub struct ClientState {
