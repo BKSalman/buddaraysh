@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::{
     collections::{HashMap, HashSet},
     io,
-    path::PathBuf,
+    path::Path,
     sync::{atomic::Ordering, Mutex},
     time::{Duration, Instant},
 };
@@ -507,7 +507,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
     let primary_gpu = if let Ok(var) = std::env::var("BUD_DRM_DEVICE") {
         DrmNode::from_path(var).expect("Invalid drm device path")
     } else {
-        primary_gpu(&session.seat())
+        primary_gpu(session.seat())
             .unwrap()
             .and_then(|x| {
                 DrmNode::from_path(x)
@@ -840,7 +840,7 @@ impl Buddaraysh<UdevData> {
         }
     }
 
-    fn device_added(&mut self, node: DrmNode, path: &PathBuf) -> Result<(), DeviceAddError> {
+    fn device_added(&mut self, node: DrmNode, path: &Path) -> Result<(), DeviceAddError> {
         // Try to open the device
         let fd = self
             .backend_data

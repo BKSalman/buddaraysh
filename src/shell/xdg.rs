@@ -195,25 +195,23 @@ fn check_grab<BackendData: Backend + 'static>(
 /// Should be called on `WlSurface::commit`
 pub fn handle_commit(popups: &mut PopupManager, space: &Space<WindowElement>, surface: &WlSurface) {
     // Handle toplevel commits.
-    if let Some(window) = space
+    if let Some(WindowElement::Wayland(ref window)) = space
         .elements()
         .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
         .cloned()
     {
-        if let WindowElement::Wayland(ref window) = window {
-            let initial_configure_sent = with_states(surface, |states| {
-                states
-                    .data_map
-                    .get::<XdgToplevelSurfaceData>()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .initial_configure_sent
-            });
+        let initial_configure_sent = with_states(surface, |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .initial_configure_sent
+        });
 
-            if !initial_configure_sent {
-                window.toplevel().send_configure();
-            }
+        if !initial_configure_sent {
+            window.toplevel().send_configure();
         }
     }
 

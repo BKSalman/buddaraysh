@@ -1,11 +1,9 @@
 use std::{cell::RefCell, os::unix::io::OwnedFd};
 
 use smithay::{
-    desktop::space::SpaceElement,
     input::pointer::Focus,
     utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
-        compositor::with_states,
         selection::data_device::{
             clear_data_device_selection, current_data_device_selection_userdata,
             request_data_device_client_selection, set_data_device_selection,

@@ -192,6 +192,16 @@ impl WindowElement {
             WindowElement::X11(w) => w.user_data(),
         }
     }
+
+    pub fn send_close(&self) {
+        match self {
+            WindowElement::Wayland(w) => w.toplevel().send_close(),
+            #[cfg(feature = "xwayland")]
+            WindowElement::X11(w) => {
+                let _ = w.close();
+            }
+        }
+    }
 }
 
 impl IsAlive for WindowElement {

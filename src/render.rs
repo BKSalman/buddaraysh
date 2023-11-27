@@ -1,31 +1,16 @@
 use smithay::{
     backend::renderer::{
-        damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
-        element::{
-            surface::WaylandSurfaceRenderElement,
-            utils::{
-                ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, RelocateRenderElement,
-                RescaleRenderElement,
-            },
-            AsRenderElements, RenderElement, Wrap,
-        },
+        element::{surface::WaylandSurfaceRenderElement, RenderElement, Wrap},
         ImportAll, ImportMem, Renderer,
     },
-    desktop::{
-        space::{
-            constrain_space_element, ConstrainBehavior, ConstrainReference, Space,
-            SpaceRenderElements,
-        },
-        Window,
-    },
+    desktop::space::{Space, SpaceRenderElements},
     output::Output,
-    utils::{Point, Rectangle, Size},
 };
 
 #[cfg(feature = "debug")]
 use crate::drawing::FpsElement;
 use crate::{
-    drawing::{PointerRenderElement, CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN},
+    drawing::{PointerRenderElement, CLEAR_COLOR},
     window::{WindowElement, WindowRenderElement},
 };
 
@@ -175,19 +160,19 @@ where
     (output_render_elements, CLEAR_COLOR)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn render_output<R>(
-    output: &Output,
-    space: &Space<WindowElement>,
-    custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
-    renderer: &mut R,
-    damage_tracker: &mut OutputDamageTracker,
-    age: usize,
-) -> Result<RenderOutputResult, OutputDamageTrackerError<R>>
-where
-    R: Renderer + ImportAll + ImportMem,
-    R::TextureId: Clone + 'static,
-{
-    let (elements, clear_color) = output_elements(output, space, custom_elements, renderer);
-    damage_tracker.render_output(renderer, age, &elements, clear_color)
-}
+// #[allow(clippy::too_many_arguments)]
+// pub fn render_output<R>(
+//     output: &Output,
+//     space: &Space<WindowElement>,
+//     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
+//     renderer: &mut R,
+//     damage_tracker: &mut OutputDamageTracker,
+//     age: usize,
+// ) -> Result<RenderOutputResult, OutputDamageTrackerError<R>>
+// where
+//     R: Renderer + ImportAll + ImportMem,
+//     R::TextureId: Clone + 'static,
+// {
+//     let (elements, clear_color) = output_elements(output, space, custom_elements, renderer);
+//     damage_tracker.render_output(renderer, age, &elements, clear_color)
+// }

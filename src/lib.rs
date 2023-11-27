@@ -1,6 +1,5 @@
 mod handlers;
 
-mod commands;
 mod cursor;
 mod drawing;
 mod focus;
@@ -33,4 +32,12 @@ pub trait Backend {
     fn seat_name(&self) -> String;
     fn reset_buffers(&mut self, output: &Output);
     fn early_import(&mut self, surface: &WlSurface);
+}
+
+pub enum Action<'a> {
+    Spawn(&'a str),
+    Quit,
+    None,
+    CycleLayout,
+    Close,
 }

@@ -1,6 +1,5 @@
 mod compositor;
 mod layer_shell;
-mod xdg_shell;
 
 use crate::focus::FocusTarget;
 use crate::{Backend, Buddaraysh};
@@ -13,10 +12,9 @@ use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::reexports::wayland_server::Resource;
 use smithay::wayland::seat::WaylandFocus;
 use smithay::wayland::selection::data_device::{
-    set_data_device_focus, ClientDndGrabHandler, DataDeviceHandler, DataDeviceState,
-    ServerDndGrabHandler,
+    set_data_device_focus, ClientDndGrabHandler, ServerDndGrabHandler,
 };
-use smithay::wayland::selection::SelectionHandler;
+
 use smithay::{delegate_data_device, delegate_output, delegate_seat};
 
 impl<BackendData: Backend + 'static> SeatHandler for Buddaraysh<BackendData> {

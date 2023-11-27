@@ -10,10 +10,10 @@ use smithay::{
     },
     desktop::{layer_map_for_output, space::SpaceElement, WindowSurfaceType},
     input::{
-        keyboard::{keysyms as xkb, FilterResult, Keysym},
+        keyboard::{keysyms as xkb, FilterResult, Keysym, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, MotionEvent, RelativeMotionEvent},
     },
-    reexports::wayland_server::{protocol::wl_surface::WlSurface, DisplayHandle},
+    reexports::wayland_server::DisplayHandle,
     utils::{Logical, Point, SERIAL_COUNTER},
     wayland::{
         pointer_constraints::{with_pointer_constraint, PointerConstraint},
@@ -24,8 +24,78 @@ use smithay::{
 use tracing::{debug, error, info};
 
 use crate::{
-    commands::Command, state::Buddaraysh, udev::UdevData, window::WindowElement, winit::WinitData,
+    state::Buddaraysh, udev::UdevData, window::WindowElement, winit::WinitData, Action, Backend,
 };
+
+impl<BackendData: Backend> Buddaraysh<BackendData> {
+    fn input_to_action(
+        &mut self,
+        modifiers: &ModifiersState,
+        keysym: Keysym,
+        state: KeyState,
+    ) -> Option<Action> {
+        if state == KeyState::Pressed {
+            if modifiers.shift && modifiers.alt {
+                return Some(Action::CycleLayout);
+            } else if modifiers.logo && keysym == Keysym::q {
+                return Some(Action::Spawn("kitty"));
+            } else if modifiers.logo && keysym == Keysym::d {
+                return Some(Action::Spawn("pkill rofi || ~/.config/rofi/launcher.sh"));
+            } else if modifiers.logo && modifiers.shift && keysym == Keysym::X {
+                return Some(Action::Quit);
+            }
+        }
+
+        None
+    }
+    fn process_common_actions(&mut self, action: Action<'_>) {
+        match action {
+            Action::Spawn(program) => {
+                match std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(program)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .envs(
+                        [self.socket_name.clone()]
+                            .into_iter()
+                            .map(|v| ("WAYLAND_DISPLAY", v.to_string_lossy().to_string()))
+                            .chain(
+                                #[cfg(feature = "xwayland")]
+                                self.xdisplay.map(|v| ("DISPLAY", format!(":{}", v))),
+                                #[cfg(not(feature = "xwayland"))]
+                                None,
+                            ),
+                    )
+                    .spawn()
+                {
+                    Ok(_child) => {
+                        // TODO: keep track of children processes
+                    }
+                    Err(e) => error!("Failed to run command: {e}"),
+                }
+                // self.children.insert(child);
+            }
+            Action::Quit => {
+                info!("Quitting.");
+                self.running.store(false, Ordering::SeqCst);
+            }
+            Action::Close => {
+                if let Some((window, _)) = self.space.element_under(self.pointer.current_location())
+                {
+                    window.send_close();
+                }
+            }
+            Action::CycleLayout => {
+                let keyboard = self.seat.get_keyboard().unwrap();
+                keyboard.with_xkb_state(self, |mut state| {
+                    state.cycle_next_layout();
+                });
+            }
+            Action::None => {}
+        }
+    }
+}
 
 impl Buddaraysh<WinitData> {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
@@ -34,14 +104,26 @@ impl Buddaraysh<WinitData> {
                 let serial = SERIAL_COUNTER.next_serial();
                 let time = Event::time_msec(&event);
 
-                self.seat.get_keyboard().unwrap().input::<(), _>(
+                let keyboard = self.seat.get_keyboard().unwrap();
+
+                let action = keyboard.input::<Action, _>(
                     self,
                     event.key_code(),
                     event.state(),
                     serial,
                     time,
-                    |_, _, _| FilterResult::Forward,
+                    |data, modifiers, handle| {
+                        let keysym = handle.modified_sym();
+
+                        data.input_to_action(modifiers, keysym, event.state());
+
+                        FilterResult::Forward
+                    },
                 );
+
+                if let Some(action) = action {
+                    self.process_common_actions(action);
+                }
             }
             InputEvent::PointerMotion { .. } => {}
             InputEvent::PointerMotionAbsolute { event, .. } => {
@@ -168,82 +250,38 @@ impl Buddaraysh<UdevData> {
                 let serial = SERIAL_COUNTER.next_serial();
                 let time = Event::time_msec(&event);
 
-                let command = self.seat.get_keyboard().unwrap().input::<Command, _>(
+                let keyboard = self.seat.get_keyboard().unwrap();
+
+                let action = keyboard.input::<Action, _>(
                     self,
                     event.key_code(),
                     event.state(),
                     serial,
                     time,
-                    |_, modifiers, handle| {
-                        let state = event.state();
+                    |data, modifiers, handle| {
                         let keysym = handle.modified_sym();
 
-                        if state == KeyState::Pressed {
-                            if modifiers.logo && keysym == Keysym::q {
-                                return FilterResult::Intercept(Command::Spawn("kitty"));
-                            } else if modifiers.logo && keysym == Keysym::d {
-                                return FilterResult::Intercept(Command::Spawn(
-                                    "pkill rofi || ~/.config/rofi/launcher.sh",
-                                ));
-                            } else if modifiers.logo && modifiers.shift && keysym == Keysym::X {
-                                return FilterResult::Intercept(Command::Quit);
-                            } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12)
-                                .contains(&keysym.raw())
-                            {
-                                // VTSwitch
-                                return FilterResult::Intercept(Command::SwitchVT(
-                                    (keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32,
-                                ));
+                        if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12)
+                            .contains(&keysym.raw())
+                        {
+                            // VTSwitch
+                            let vt = (keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32;
+                            info!(to = vt, "Trying to switch vt");
+                            if let Err(err) = data.backend_data.session.change_vt(vt) {
+                                error!(vt, "Error switching vt: {}", err);
                             }
+
+                            return FilterResult::Intercept(Action::None);
                         }
+
+                        data.input_to_action(modifiers, keysym, event.state());
 
                         FilterResult::Forward
                     },
                 );
 
-                if let Some(command) = command {
-                    match command {
-                        Command::SwitchVT(vt) => {
-                            info!(to = vt, "Trying to switch vt");
-                            if let Err(err) = self.backend_data.session.change_vt(vt) {
-                                error!(vt, "Error switching vt: {}", err);
-                            }
-                        }
-                        Command::Spawn(program) => {
-                            match std::process::Command::new("sh")
-                                .arg("-c")
-                                .arg(&program)
-                                .stdin(Stdio::null())
-                                .stdout(Stdio::null())
-                                .envs(
-                                    [self.socket_name.clone()]
-                                        .into_iter()
-                                        .map(|v| {
-                                            ("WAYLAND_DISPLAY", v.to_string_lossy().to_string())
-                                        })
-                                        .into_iter()
-                                        .chain(
-                                            #[cfg(feature = "xwayland")]
-                                            self.xdisplay.map(|v| ("DISPLAY", format!(":{}", v))),
-                                            #[cfg(not(feature = "xwayland"))]
-                                            None,
-                                        ),
-                                )
-                                .spawn()
-                            {
-                                Ok(_child) => {
-                                    // TODO: keep track of children processes
-                                }
-                                Err(e) => error!("Failed to run command: {e}"),
-                            }
-                            // self.children.insert(child);
-                        }
-                        Command::Quit => {
-                            info!("Quitting.");
-                            self.running.store(false, Ordering::SeqCst);
-                        }
-                        Command::None => {}
-                    }
+                if let Some(action) = action {
+                    self.process_common_actions(action);
                 }
             }
             InputEvent::PointerMotion { event, .. } => {
@@ -454,7 +492,6 @@ impl Buddaraysh<UdevData> {
                         .element_under(pointer.current_location())
                         .map(|(w, l)| (w.clone(), l))
                     {
-                        debug!("raising window: {window:#?}");
                         self.space.raise_element(&window, true);
                         keyboard.set_focus(self, Some(window.clone().into()), serial);
                         self.space.elements().for_each(|window| {

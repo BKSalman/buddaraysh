@@ -5,7 +5,8 @@ use smithay::{
 
 use crate::window::WindowElement;
 
-pub mod x11;
+mod x11;
+pub mod xdg;
 
 fn place_new_window(
     space: &mut Space<WindowElement>,

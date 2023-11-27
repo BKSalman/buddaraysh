@@ -1,5 +1,6 @@
 use crate::{
-    grabs::resize_grab, state::ClientState, window::WindowElement, Backend, Buddaraysh, CalloopData,
+    grabs::resize_grab, shell, state::ClientState, window::WindowElement, Backend, Buddaraysh,
+    CalloopData,
 };
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
@@ -28,8 +29,6 @@ use smithay::{
     },
     xwayland::{X11Wm, XWaylandClientData},
 };
-
-use super::xdg_shell;
 
 impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendData> {
     fn compositor_state(&mut self) -> &mut CompositorState {
@@ -89,22 +88,20 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
             while let Some(parent) = get_parent(&root) {
                 root = parent;
             }
-            if let Some(window) = self.space.elements().find(|w| match w {
-                crate::window::WindowElement::Wayland(w) => w.toplevel().wl_surface() == &root,
-                #[cfg(feature = "xwayland")]
-                crate::window::WindowElement::X11(w) => false,
-            }) {
+
+            if let Some(window) = self.window_for_surface(surface) {
                 match window {
                     crate::window::WindowElement::Wayland(w) => w.on_commit(),
                     #[cfg(feature = "xwayland")]
-                    crate::window::WindowElement::X11(w) => {}
+                    // TODO:
+                    crate::window::WindowElement::X11(_w) => {}
                 }
             }
         };
 
         ensure_initial_configure(surface, &self.space, &mut self.popups);
 
-        xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
+        shell::xdg::handle_commit(&mut self.popups, &self.space, surface);
         resize_grab::handle_commit(&mut self.space, surface);
     }
 }

@@ -8,7 +8,6 @@ use smithay::{
     },
     input::Seat,
     utils::{Logical, Point, Serial},
-    wayland::shell::xdg::XdgShellHandler,
 };
 
 use std::cell::{RefCell, RefMut};
@@ -93,11 +92,10 @@ impl HeaderBar {
                     }
                     #[cfg(feature = "xwayland")]
                     WindowElement::X11(w) => {
-                        // TODO:
-                        // let window = w.clone();
-                        // state
-                        //     .loop_handle
-                        //     .insert_idle(move |data| data.state.move_request_x11(&window));
+                        let window = w.clone();
+                        state
+                            .loop_handle
+                            .insert_idle(move |data| data.state.move_request_x11(&window));
                     }
                 };
             }

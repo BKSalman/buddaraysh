@@ -6,15 +6,8 @@ use smithay::{
     output::Output,
     reexports::wayland_server::protocol::wl_output::WlOutput,
     utils::SERIAL_COUNTER,
-    wayland::{
-        compositor::with_states,
-        shell::wlr_layer::{
-            KeyboardInteractivity, Layer as WlrLayer, LayerSurface, LayerSurfaceCachedState,
-            WlrLayerShellHandler,
-        },
-    },
+    wayland::shell::wlr_layer::{Layer as WlrLayer, LayerSurface, WlrLayerShellHandler},
 };
-use tracing::debug;
 
 use crate::{Backend, Buddaraysh};
 
