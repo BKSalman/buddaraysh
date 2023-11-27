@@ -11,6 +11,7 @@ mod render;
 mod shell;
 mod ssd;
 mod state;
+mod systemd;
 pub mod udev;
 mod window;
 pub mod winit;

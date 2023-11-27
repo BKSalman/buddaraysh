@@ -7,6 +7,8 @@ use tracing_subscriber::{filter::LevelFilter, prelude::*, EnvFilter};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     logging();
 
+    std::env::set_var("XDG_CURRENT_DESKTOP", "Buddaraysh");
+
     match std::env::var("BUD_BACKEND")
         .unwrap_or(String::from("udev"))
         .as_str()

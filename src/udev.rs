@@ -114,6 +114,7 @@ use crate::{
     drawing::{PointerElement, CLEAR_COLOR},
     protocols::screencopy::{frame::Screencopy, ScreencopyHandler, ScreencopyManagerState},
     render::{output_elements, CustomRenderElements},
+    systemd,
     window::WindowElement,
     Backend, Buddaraysh, CalloopData,
 };
@@ -772,8 +773,6 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
 
     debug!("setting WAYLAND_DISPLAY to {:#?}", state.socket_name);
 
-    std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
-
     /*
      * Start XWayland if supported
      */
@@ -787,6 +786,8 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
     ) {
         error!("Failed to start XWayland: {}", e);
     }
+
+    systemd::ready(&state);
 
     /*
      * And run our loop
@@ -1384,7 +1385,6 @@ impl Buddaraysh<UdevData> {
         crtc: Option<crtc::Handle>,
         screencopy: Option<Screencopy>,
     ) {
-        trace!("rendering");
         let device_backend = match self.backend_data.backends.get_mut(&node) {
             Some(backend) => backend,
             None => {
@@ -1978,7 +1978,6 @@ impl ScreencopyHandler for Buddaraysh<UdevData> {
         for (node, device) in &self.backend_data.backends {
             for (crtc, surface) in &device.surfaces {
                 if surface.output == frame.output {
-                    info!("rendering screencopy frame");
                     self.render(*node, Some(*crtc), Some(frame));
                     return;
                 }
