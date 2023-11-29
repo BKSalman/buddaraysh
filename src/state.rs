@@ -83,6 +83,7 @@ pub struct Buddaraysh<BackendData: Backend + 'static> {
     pub data_device_state: DataDeviceState,
     pub popups: PopupManager,
     pub presentation_state: PresentationState,
+    pub keyboard_shortcuts_inhibit_state: KeyboardShortcutsInhibitState,
 
     pub dnd_icon: Option<WlSurface>,
 
@@ -124,6 +125,8 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let popups = PopupManager::default();
         let presentation_state = PresentationState::new::<Self>(&dh, clock.id() as u32);
+        let keyboard_shortcuts_inhibit_state =
+            KeyboardShortcutsInhibitState::new::<Self>(&display_handle);
 
         // A seat is a group of keyboards, pointer and touch devices.
         // A seat typically has a pointer and maintains a keyboard focus and a pointer focus.
@@ -219,6 +222,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             data_device_state,
             presentation_state,
             popups,
+            keyboard_shortcuts_inhibit_state,
 
             dnd_icon: None,
 

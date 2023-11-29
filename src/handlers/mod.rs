@@ -1,4 +1,5 @@
 mod compositor;
+mod keyboard_shortcuts_inhibit;
 mod layer_shell;
 
 use crate::focus::FocusTarget;

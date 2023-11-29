@@ -89,13 +89,8 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
                 root = parent;
             }
 
-            if let Some(window) = self.window_for_surface(surface) {
-                match window {
-                    crate::window::WindowElement::Wayland(w) => w.on_commit(),
-                    #[cfg(feature = "xwayland")]
-                    // TODO:
-                    crate::window::WindowElement::X11(_w) => {}
-                }
+            if let Some(WindowElement::Wayland(w)) = self.window_for_surface(surface) {
+                w.on_commit();
             }
         };
 
@@ -119,7 +114,6 @@ impl<BackendData: Backend + 'static> ShmHandler for Buddaraysh<BackendData> {
 delegate_compositor!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 delegate_shm!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 
-// TODO:
 // #[derive(Default)]
 // pub struct SurfaceData {
 //     pub geometry: Option<Rectangle<i32, Logical>>,
@@ -166,7 +160,6 @@ fn ensure_initial_configure(
             }
         }
 
-        // TODO:
         // with_states(surface, |states| {
         //     let mut data = states
         //         .data_map
@@ -208,7 +201,7 @@ fn ensure_initial_configure(
         }
 
         return;
-    };
+    }
 
     if let Some(output) = space.outputs().find(|o| {
         let map = layer_map_for_output(o);
@@ -238,5 +231,5 @@ fn ensure_initial_configure(
 
             layer.layer_surface().send_configure();
         }
-    };
+    }
 }

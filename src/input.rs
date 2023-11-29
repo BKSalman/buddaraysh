@@ -6,6 +6,7 @@ use smithay::{
             AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
             KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
         },
+        libinput::LibinputInputBackend,
         session::Session,
     },
     desktop::{layer_map_for_output, space::SpaceElement, WindowSurfaceType},
@@ -13,18 +14,25 @@ use smithay::{
         keyboard::{keysyms as xkb, FilterResult, Keysym, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, MotionEvent, RelativeMotionEvent},
     },
-    reexports::wayland_server::DisplayHandle,
-    utils::{Logical, Point, SERIAL_COUNTER},
+    reexports::{
+        input::Led, wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge,
+        wayland_server::DisplayHandle,
+    },
+    utils::{Logical, Point, Serial, SERIAL_COUNTER},
     wayland::{
+        compositor,
+        input_method::InputMethodSeat,
+        keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
         pointer_constraints::{with_pointer_constraint, PointerConstraint},
         seat::WaylandFocus,
-        shell::wlr_layer::Layer as WlrLayer,
+        shell::{wlr_layer::Layer as WlrLayer, xdg::XdgToplevelSurfaceData},
     },
 };
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::{
-    state::Buddaraysh, udev::UdevData, window::WindowElement, winit::WinitData, Action, Backend,
+    focus::FocusTarget, shell::FullscreenSurface, state::Buddaraysh, udev::UdevData,
+    window::WindowElement, winit::WinitData, Action, Backend, BTN_LEFT, BTN_RIGHT,
 };
 
 impl<BackendData: Backend> Buddaraysh<BackendData> {
@@ -34,13 +42,15 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         keysym: Keysym,
         state: KeyState,
     ) -> Option<Action> {
-        if state == KeyState::Pressed {
-            if modifiers.shift && modifiers.alt {
-                return Some(Action::CycleLayout);
+        if state == KeyState::Pressed && !self.seat.keyboard_shortcuts_inhibited() {
+            if modifiers.logo && keysym == Keysym::c {
+                return Some(Action::Close);
             } else if modifiers.logo && keysym == Keysym::q {
-                return Some(Action::Spawn("kitty"));
+                return Some(Action::Spawn(String::from("kitty")));
             } else if modifiers.logo && keysym == Keysym::d {
-                return Some(Action::Spawn("pkill rofi || ~/.config/rofi/launcher.sh"));
+                return Some(Action::Spawn(String::from(
+                    "pkill rofi || ~/.config/rofi/launcher.sh",
+                )));
             } else if modifiers.logo && modifiers.shift && keysym == Keysym::X {
                 return Some(Action::Quit);
             }
@@ -48,7 +58,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
 
         None
     }
-    fn process_common_actions(&mut self, action: Action<'_>) {
+    fn process_common_actions(&mut self, action: Action) {
         match action {
             Action::Spawn(program) => {
                 match std::process::Command::new("sh")
@@ -81,16 +91,15 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 self.running.store(false, Ordering::SeqCst);
             }
             Action::Close => {
-                if let Some((window, _)) = self.space.element_under(self.pointer.current_location())
-                {
-                    window.send_close();
-                }
-            }
-            Action::CycleLayout => {
                 let keyboard = self.seat.get_keyboard().unwrap();
-                keyboard.with_xkb_state(self, |mut state| {
-                    state.cycle_next_layout();
-                });
+                if let Some(focused_surface) = keyboard
+                    .current_focus()
+                    .and_then(|focused| focused.wl_surface())
+                {
+                    if let Some(window) = self.window_for_surface(&focused_surface) {
+                        window.send_close();
+                    }
+                }
             }
             Action::None => {}
         }
@@ -115,9 +124,10 @@ impl Buddaraysh<WinitData> {
                     |data, modifiers, handle| {
                         let keysym = handle.modified_sym();
 
-                        data.input_to_action(modifiers, keysym, event.state());
-
-                        FilterResult::Forward
+                        data.input_to_action(modifiers, keysym, event.state())
+                            .map_or(FilterResult::Forward, |action| {
+                                FilterResult::Intercept(action)
+                            })
                     },
                 );
 
@@ -174,10 +184,14 @@ impl Buddaraysh<WinitData> {
                             }
                         });
                     } else {
-                        self.space.elements().for_each(|window| {
-                            if let WindowElement::Wayland(window) = window {
+                        self.space.elements().for_each(|window| match window {
+                            WindowElement::Wayland(window) => {
                                 window.set_activated(false);
                                 window.toplevel().send_pending_configure();
+                            }
+                            #[cfg(feature = "xwayland")]
+                            WindowElement::X11(surface) => {
+                                let _ = surface.set_activated(false);
                             }
                         });
                         keyboard.set_focus(self, None, serial);
@@ -240,10 +254,10 @@ impl Buddaraysh<WinitData> {
 }
 
 impl Buddaraysh<UdevData> {
-    pub fn process_input_event<I: InputBackend>(
+    pub fn process_input_event(
         &mut self,
         _display_handle: &DisplayHandle,
-        event: InputEvent<I>,
+        event: InputEvent<LibinputInputBackend>,
     ) {
         match event {
             InputEvent::Keyboard { event, .. } => {
@@ -251,6 +265,18 @@ impl Buddaraysh<UdevData> {
                 let time = Event::time_msec(&event);
 
                 let keyboard = self.seat.get_keyboard().unwrap();
+
+                let modifiers = keyboard.modifier_state();
+
+                let mut leds = Led::empty();
+                if modifiers.num_lock {
+                    leds |= Led::NUMLOCK;
+                }
+                if modifiers.caps_lock {
+                    leds |= Led::CAPSLOCK;
+                }
+
+                event.device().led_update(leds);
 
                 let action = keyboard.input::<Action, _>(
                     self,
@@ -274,9 +300,10 @@ impl Buddaraysh<UdevData> {
                             return FilterResult::Intercept(Action::None);
                         }
 
-                        data.input_to_action(modifiers, keysym, event.state());
-
-                        FilterResult::Forward
+                        data.input_to_action(modifiers, keysym, event.state())
+                            .map_or(FilterResult::Forward, |action| {
+                                FilterResult::Intercept(action)
+                            })
                     },
                 );
 
@@ -416,8 +443,6 @@ impl Buddaraysh<UdevData> {
                 let pointer = self.pointer.clone();
                 let under = self.surface_under(pointer_location);
 
-                debug!("pointer location: {pointer_location:#?}");
-
                 pointer.motion(
                     self,
                     under,
@@ -472,6 +497,7 @@ impl Buddaraysh<UdevData> {
                             .or_else(|| {
                                 layers.layer_under(WlrLayer::Top, self.pointer.current_location())
                             })
+                if ButtonState::Pressed == button_state {
                         {
                             if layer.can_receive_keyboard_focus() {
                                 if let Some((_, _)) = layer.surface_under(
@@ -542,6 +568,9 @@ impl Buddaraysh<UdevData> {
                         }
                     }
                 };
+
+                    self.update_keyboard_focus(serial);
+                }
 
                 pointer.button(
                     self,
