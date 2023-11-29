@@ -9,6 +9,8 @@ use crate::{Backend, Buddaraysh};
 //
 
 use smithay::input::{Seat, SeatHandler, SeatState};
+use smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::Resource;
 use smithay::wayland::seat::WaylandFocus;
 use smithay::wayland::selection::data_device::{
@@ -44,7 +46,20 @@ impl<BackendData: Backend + 'static> SeatHandler for Buddaraysh<BackendData> {
 
 delegate_seat!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 
-impl<BackendData: Backend + 'static> ClientDndGrabHandler for Buddaraysh<BackendData> {}
+impl<BackendData: Backend + 'static> ClientDndGrabHandler for Buddaraysh<BackendData> {
+    fn started(
+        &mut self,
+        _source: Option<WlDataSource>,
+        icon: Option<WlSurface>,
+        _seat: Seat<Self>,
+    ) {
+        self.dnd_icon = icon;
+    }
+
+    fn dropped(&mut self, _seat: Seat<Self>) {
+        self.dnd_icon = None;
+    }
+}
 impl<BackendData: Backend + 'static> ServerDndGrabHandler for Buddaraysh<BackendData> {}
 
 delegate_data_device!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);

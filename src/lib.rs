@@ -14,12 +14,18 @@ mod systemd;
 pub mod udev;
 mod window;
 pub mod winit;
+mod workspace;
 
 use smithay::{
     output::Output,
     reexports::wayland_server::{protocol::wl_surface::WlSurface, DisplayHandle},
 };
 pub use state::Buddaraysh;
+
+// The button is a button code as defined in the
+// Linux kernel's linux/input-event-codes.h header file, e.g. BTN_LEFT.
+pub const BTN_LEFT: u32 = 0x110;
+pub const BTN_RIGHT: u32 = 0x111;
 
 pub struct CalloopData<BackendData: Backend + 'static> {
     state: Buddaraysh<BackendData>,
@@ -34,10 +40,10 @@ pub trait Backend {
     fn early_import(&mut self, surface: &WlSurface);
 }
 
-pub enum Action<'a> {
-    Spawn(&'a str),
+#[derive(Debug, Clone)]
+pub enum Action {
+    Spawn(String),
     Quit,
     None,
-    CycleLayout,
     Close,
 }

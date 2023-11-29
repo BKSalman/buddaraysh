@@ -53,7 +53,7 @@ use smithay::{
     },
     delegate_dmabuf, delegate_drm_lease,
     desktop::{
-        space::Space,
+        space::{Space, SurfaceTree},
         utils::{
             surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
             update_surface_primary_scanout_output, OutputPresentationFeedback,
@@ -1035,13 +1035,13 @@ impl Buddaraysh<UdevData> {
                 GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
             );
 
-            let color_formats = if std::env::var("ANVIL_DISABLE_10BIT").is_ok() {
+            let color_formats = if std::env::var("BUD_DISABLE_10BIT").is_ok() {
                 SUPPORTED_FORMATS_8BIT_ONLY
             } else {
                 SUPPORTED_FORMATS
             };
 
-            let compositor = if std::env::var("ANVIL_DISABLE_DRM_COMPOSITOR").is_ok() {
+            let compositor = if std::env::var("BUD_DISABLE_DRM_COMPOSITOR").is_ok() {
                 let gbm_surface = match GbmBufferedSurface::new(
                     surface,
                     allocator,
@@ -1498,7 +1498,7 @@ impl Buddaraysh<UdevData> {
             self.pointer.current_location(),
             &pointer_image,
             &mut self.backend_data.pointer_element,
-            // &self.dnd_icon,
+            &self.dnd_icon,
             &mut self.cursor_status.lock().unwrap(),
             &self.clock,
             // self.show_window_preview,
@@ -1667,7 +1667,7 @@ fn render_surface<'a, 'b, 'c>(
     pointer_location: Point<f64, Logical>,
     pointer_image: &TextureBuffer<MultiTexture>,
     pointer_element: &mut PointerElement<MultiTexture>,
-    // dnd_icon: &Option<wl_surface::WlSurface>,
+    dnd_icon: &Option<wl_surface::WlSurface>,
     cursor_status: &mut CursorImageStatus,
     clock: &Clock<Monotonic>,
     // show_window_preview: bool,
@@ -1724,6 +1724,23 @@ fn render_surface<'a, 'b, 'c>(
             scale,
             1.0,
         ));
+
+        // draw the dnd icon if applicable
+        {
+            if let Some(wl_surface) = dnd_icon.as_ref() {
+                if wl_surface.alive() {
+                    custom_elements.extend(
+                        AsRenderElements::<UdevRenderer<'a, 'b, 'c>>::render_elements(
+                            &SurfaceTree::from_surface(wl_surface),
+                            renderer,
+                            cursor_pos_scaled,
+                            scale,
+                            1.0,
+                        ),
+                    );
+                }
+            }
+        }
     }
 
     #[cfg(feature = "debug")]

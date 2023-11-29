@@ -7,7 +7,7 @@ use std::{
 
 use smithay::{
     delegate_data_control, delegate_presentation, delegate_primary_selection,
-    desktop::{PopupManager, Space},
+    desktop::{layer_map_for_output, PopupManager, Space},
     input::{
         pointer::{CursorImageStatus, PointerHandle},
         Seat, SeatState,
@@ -25,6 +25,7 @@ use smithay::{
     utils::{Clock, Logical, Monotonic, Point},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
+        keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
         output::OutputManagerState,
         presentation::PresentationState,
         selection::{
@@ -33,9 +34,13 @@ use smithay::{
             wlr_data_control::{DataControlHandler, DataControlState},
             SelectionHandler,
         },
-        shell::{wlr_layer::WlrLayerShellState, xdg::XdgShellState},
+        shell::{
+            wlr_layer::{Layer as WlrLayer, WlrLayerShellState},
+            xdg::XdgShellState,
+        },
         shm::ShmState,
         socket::ListeningSocketSource,
+        xdg_activation::XdgActivationState,
     },
 };
 
@@ -48,7 +53,10 @@ use smithay::{
     xwayland::{X11Wm, XWayland, XWaylandEvent},
 };
 
-use crate::{cursor::Cursor, focus::FocusTarget, window::WindowElement, Backend, CalloopData};
+use crate::{
+    cursor::Cursor, focus::FocusTarget, shell::FullscreenSurface, window::WindowElement, Backend,
+    CalloopData,
+};
 
 pub struct Buddaraysh<BackendData: Backend + 'static> {
     pub start_time: std::time::Instant,
@@ -75,6 +83,8 @@ pub struct Buddaraysh<BackendData: Backend + 'static> {
     pub data_device_state: DataDeviceState,
     pub popups: PopupManager,
     pub presentation_state: PresentationState,
+
+    pub dnd_icon: Option<WlSurface>,
 
     pub seat_name: String,
     pub seat: Seat<Self>,
@@ -210,10 +220,11 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             presentation_state,
             popups,
 
+            dnd_icon: None,
+
             seat,
             backend_data,
             loop_handle,
-            // TODO: use this for PresentationState
             clock,
             pointer,
             cursor_status,

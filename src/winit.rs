@@ -1,30 +1,35 @@
-use std::time::Duration;
+use std::{sync::Mutex, time::Duration};
 
 use smithay::{
     backend::{
         allocator::dmabuf::Dmabuf,
         egl::EGLDevice,
         renderer::{
-            damage::OutputDamageTracker, element::surface::WaylandSurfaceRenderElement,
-            gles::GlesRenderer, ImportDma, ImportEgl,
+            damage::OutputDamageTracker, element::AsRenderElements, gles::GlesRenderer, ImportDma,
+            ImportEgl,
         },
         winit::{self, WinitEvent, WinitGraphicsBackend},
     },
     delegate_dmabuf,
+    desktop::space::SurfaceTree,
+    input::pointer::{CursorImageAttributes, CursorImageStatus},
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::EventLoop,
         wayland_server::{protocol::wl_surface, Display},
     },
-    utils::{Rectangle, Transform},
-    wayland::dmabuf::{
-        DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState,
-        ImportNotifier,
+    utils::{IsAlive, Rectangle, Scale, Transform},
+    wayland::{
+        compositor,
+        dmabuf::{
+            DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState,
+            ImportNotifier,
+        },
     },
 };
 use tracing::{error, info, warn};
 
-use crate::{Backend, Buddaraysh, CalloopData};
+use crate::{render::CustomRenderElements, Backend, Buddaraysh, CalloopData};
 
 pub struct WinitData {
     backend: WinitGraphicsBackend<GlesRenderer>,
@@ -175,8 +180,6 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
 
     state.space.map_output(&output, (0, 0));
 
-    std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
-
     event_loop
         .handle()
         .insert_source(winit, move |event, _, data| {
@@ -201,18 +204,74 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                     let damage = Rectangle::from_loc_and_size((0, 0), size);
 
                     state.backend_data.backend.bind().unwrap();
+
+                    let renderer = state.backend_data.backend.renderer();
+
+                    let mut cursor_guard = state.cursor_status.lock().unwrap();
+
+                    // draw the cursor as relevant
+                    // reset the cursor if the surface is no longer alive
+                    let mut reset = false;
+                    if let CursorImageStatus::Surface(ref surface) = *cursor_guard {
+                        reset = !surface.alive();
+                    }
+                    if reset {
+                        *cursor_guard = CursorImageStatus::default_named();
+                    }
+                    // let cursor_visible = !matches!(*cursor_guard, CursorImageStatus::Surface(_));
+
+                    // pointer_element.set_status(cursor_guard.clone());
+
+                    let scale = Scale::from(output.current_scale().fractional_scale());
+                    let cursor_hotspot =
+                        if let CursorImageStatus::Surface(ref surface) = *cursor_guard {
+                            compositor::with_states(surface, |states| {
+                                states
+                                    .data_map
+                                    .get::<Mutex<CursorImageAttributes>>()
+                                    .unwrap()
+                                    .lock()
+                                    .unwrap()
+                                    .hotspot
+                            })
+                        } else {
+                            (0, 0).into()
+                        };
+
+                    let cursor_pos = state.pointer.current_location() - cursor_hotspot.to_f64();
+                    let cursor_pos_scaled = cursor_pos.to_physical(scale).to_i32_round();
+
+                    let mut custom_elements = vec![];
+
+                    let dnd_icon = state.dnd_icon.as_ref();
+
+                    // draw the dnd icon if any
+                    if let Some(surface) = dnd_icon {
+                        if surface.alive() {
+                            custom_elements.extend(
+                                AsRenderElements::<GlesRenderer>::render_elements(
+                                    &SurfaceTree::from_surface(surface),
+                                    renderer,
+                                    cursor_pos_scaled,
+                                    scale,
+                                    1.0,
+                                ),
+                            );
+                        }
+                    }
+
                     smithay::desktop::space::render_output::<
                         _,
-                        WaylandSurfaceRenderElement<GlesRenderer>,
+                        CustomRenderElements<GlesRenderer>,
                         _,
                         _,
                     >(
                         &output,
-                        state.backend_data.backend.renderer(),
+                        renderer,
                         1.0,
                         0,
                         [&state.space],
-                        &[],
+                        &custom_elements,
                         &mut state.backend_data.damage_tracker,
                         [0.1, 0.1, 0.1, 1.0],
                     )

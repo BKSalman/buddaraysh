@@ -14,7 +14,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .as_str()
     {
         "winit" => run_winit()?,
-        _ => run_udev()?,
+        "udev" => run_udev()?,
+        _ => panic!("invalid backend"),
     }
 
     Ok(())

@@ -1,4 +1,4 @@
-use crate::{focus::FocusTarget, window::WindowElement, Backend, Buddaraysh};
+use crate::{focus::FocusTarget, window::WindowElement, Backend, Buddaraysh, BTN_LEFT};
 use smithay::{
     desktop::{space::SpaceElement, Space},
     input::pointer::{
@@ -13,6 +13,7 @@ use smithay::{
     },
     utils::{Logical, Point, Rectangle, Size},
     wayland::{compositor, shell::xdg::SurfaceCachedState},
+    xwayland::xwm,
 };
 use std::cell::RefCell;
 
@@ -34,8 +35,15 @@ bitflags::bitflags! {
 
 impl From<xdg_toplevel::ResizeEdge> for ResizeEdge {
     #[inline]
-    fn from(x: xdg_toplevel::ResizeEdge) -> Self {
-        Self::from_bits(x as u32).unwrap()
+    fn from(value: xdg_toplevel::ResizeEdge) -> Self {
+        Self::from_bits(value as u32).unwrap()
+    }
+}
+
+impl From<xwm::ResizeEdge> for ResizeEdge {
+    #[inline]
+    fn from(value: xwm::ResizeEdge) -> Self {
+        Self::from_bits(value as u32).unwrap()
     }
 }
 
@@ -141,10 +149,6 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
         event: &ButtonEvent,
     ) {
         handle.button(data, event);
-
-        // The button is a button code as defined in the
-        // Linux kernel's linux/input-event-codes.h header file, e.g. BTN_LEFT.
-        const BTN_LEFT: u32 = 0x110;
 
         if !handle.current_pressed().contains(&BTN_LEFT) {
             // No more buttons are pressed, release the grab.
