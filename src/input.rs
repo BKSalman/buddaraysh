@@ -455,8 +455,7 @@ impl Buddaraysh<UdevData> {
                 pointer.frame(self);
             }
             InputEvent::PointerButton { event, .. } => {
-                let pointer = self.seat.get_pointer().unwrap();
-                let keyboard = self.seat.get_keyboard().unwrap();
+                let pointer = self.pointer.clone();
 
                 let serial = SERIAL_COUNTER.next_serial();
 
@@ -464,110 +463,83 @@ impl Buddaraysh<UdevData> {
 
                 let button_state = event.state();
 
-                if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
-                    let output = self
-                        .space
-                        .output_under(self.pointer.current_location())
-                        .next()
-                        .cloned();
-
-                    if let Some(output) = output.as_ref() {
-                        let output_geo = self.space.output_geometry(output).unwrap();
-                        // if let Some(window) = output
-                        //     .user_data()
-                        //     .get::<FullscreenSurface>()
-                        //     .and_then(|f| f.get())
-                        // {
-                        //     if let Some((_, _)) = window.surface_under(
-                        //         self.pointer.current_location() - output_geo.loc.to_f64(),
-                        //         WindowSurfaceType::ALL,
-                        //     ) {
-                        //         #[cfg(feature = "xwayland")]
-                        //         if let WindowElement::X11(surf) = &window {
-                        //             self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
-                        //         }
-                        //         keyboard.set_focus(self, Some(window.into()), serial);
-                        //         return;
-                        //     }
-                        // }
-
-                        let layers = layer_map_for_output(output);
-                        if let Some(layer) = layers
-                            .layer_under(WlrLayer::Overlay, self.pointer.current_location())
-                            .or_else(|| {
-                                layers.layer_under(WlrLayer::Top, self.pointer.current_location())
-                            })
                 if ButtonState::Pressed == button_state {
-                        {
-                            if layer.can_receive_keyboard_focus() {
-                                if let Some((_, _)) = layer.surface_under(
-                                    self.pointer.current_location()
-                                        - output_geo.loc.to_f64()
-                                        - layers.layer_geometry(layer).unwrap().loc.to_f64(),
-                                    WindowSurfaceType::ALL,
-                                ) {
-                                    keyboard.set_focus(self, Some(layer.clone().into()), serial);
-                                    return;
-                                }
-                            }
-                        }
-                    }
+                    let keyboard = self.seat.get_keyboard().unwrap();
 
-                    if let Some((window, _loc)) = self
-                        .space
-                        .element_under(pointer.current_location())
-                        .map(|(w, l)| (w.clone(), l))
+                    let modifiers = keyboard.modifier_state();
+
+                    // TODO: make this better dear mr.future Salman xqcL
+                    if modifiers.logo
+                        && button == BTN_LEFT
+                        && !keyboard.is_grabbed()
+                        && !pointer.is_grabbed()
                     {
-                        self.space.raise_element(&window, true);
-                        keyboard.set_focus(self, Some(window.clone().into()), serial);
-                        self.space.elements().for_each(|window| {
-                            if let WindowElement::Wayland(window) = window {
-                                window.toplevel().send_pending_configure();
+                        if let Some((FocusTarget::Window(window), _loc)) =
+                            self.surface_under(pointer.current_location())
+                        {
+                            match window {
+                                WindowElement::Wayland(w) => {
+                                    let seat = self.seat.clone();
+                                    let toplevel = w.toplevel().clone();
+                                    self.loop_handle.insert_idle(move |data| {
+                                        data.state.move_request_xdg(&toplevel, &seat, serial)
+                                    });
+                                }
+                                #[cfg(feature = "xwayland")]
+                                WindowElement::X11(w) => {
+                                    let window = w.clone();
+                                    self.loop_handle.insert_idle(move |data| {
+                                        data.state.move_request_x11(&window)
+                                    });
+                                }
                             }
-                        });
-                        #[cfg(feature = "xwayland")]
-                        if let WindowElement::X11(surf) = &window {
-                            self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
                         }
-                    } else {
-                        self.space.elements().for_each(|window| {
-                            window.set_activate(false);
-                            if let WindowElement::Wayland(window) = window {
-                                window.toplevel().send_pending_configure();
-                            }
-                        });
-                        keyboard.set_focus(self, None, serial);
-
-                        if let Some(output) = output.as_ref() {
-                            let output_geo = self.space.output_geometry(output).unwrap();
-                            let layers = layer_map_for_output(output);
-                            if let Some(layer) = layers
-                                .layer_under(WlrLayer::Bottom, self.pointer.current_location())
-                                .or_else(|| {
-                                    layers.layer_under(
-                                        WlrLayer::Background,
-                                        self.pointer.current_location(),
-                                    )
-                                })
-                            {
-                                if layer.can_receive_keyboard_focus() {
-                                    if let Some((_, _)) = layer.surface_under(
-                                        self.pointer.current_location()
-                                            - output_geo.loc.to_f64()
-                                            - layers.layer_geometry(layer).unwrap().loc.to_f64(),
-                                        WindowSurfaceType::ALL,
-                                    ) {
-                                        keyboard.set_focus(
-                                            self,
-                                            Some(layer.clone().into()),
-                                            serial,
-                                        );
-                                    }
+                    } else if modifiers.logo
+                        && button == BTN_RIGHT
+                        && !keyboard.is_grabbed()
+                        && !pointer.is_grabbed()
+                    {
+                        if let Some((FocusTarget::Window(window), _loc)) =
+                            self.surface_under(pointer.current_location())
+                        {
+                            match window {
+                                WindowElement::Wayland(ref w) => {
+                                    let seat = self.seat.clone();
+                                    let toplevel = w.toplevel().clone();
+                                    let pointer_location = pointer.current_location();
+                                    info!("pointer locatin: {pointer_location:#?}");
+                                    let window_location =
+                                        self.space.element_location(&window).unwrap();
+                                    let geometry = window.geometry();
+                                    info!("geometry: {geometry:#?}");
+                                    let diff = pointer_location - window_location.to_f64();
+                                    let half_width = (geometry.size.w / 2) as f64;
+                                    let half_height = (geometry.size.h / 2) as f64;
+                                    self.loop_handle.insert_idle(move |data| {
+                                        let edge = if diff.x > half_width && diff.y > half_height {
+                                            ResizeEdge::BottomRight
+                                        } else if diff.x < half_width && diff.y < half_height {
+                                            ResizeEdge::TopLeft
+                                        } else if diff.x > half_width && diff.y < half_height {
+                                            ResizeEdge::TopRight
+                                        } else if diff.x < half_width && diff.y > half_height {
+                                            ResizeEdge::BottomLeft
+                                        } else {
+                                            ResizeEdge::None
+                                        };
+                                        data.state.resize_request_xdg(toplevel, seat, serial, edge)
+                                    });
+                                }
+                                #[cfg(feature = "xwayland")]
+                                WindowElement::X11(w) => {
+                                    let window = w.clone();
+                                    self.loop_handle.insert_idle(move |data| {
+                                        data.state.move_request_x11(&window)
+                                    });
                                 }
                             }
                         }
                     }
-                };
 
                     self.update_keyboard_focus(serial);
                 }
@@ -650,6 +622,102 @@ impl Buddaraysh<UdevData> {
             (clamped_x, clamped_y).into()
         } else {
             (clamped_x, pos_y).into()
+        }
+    }
+
+    fn update_keyboard_focus(&mut self, serial: Serial) {
+        let keyboard = self.seat.get_keyboard().unwrap();
+        let input_method = self.seat.input_method();
+        // change the keyboard focus unless the pointer or keyboard is grabbed
+        // We test for any matching surface type here but always use the root
+        // (in case of a window the toplevel) surface for the focus.
+        // So for example if a user clicks on a subsurface or popup the toplevel
+        // will receive the keyboard focus. Directly assigning the focus to the
+        // matching surface leads to issues with clients dismissing popups and
+        // subsurface menus (for example firefox-wayland).
+        // see here for a discussion about that issue:
+        // https://gitlab.freedesktop.org/wayland/wayland/-/issues/294
+        if !self.pointer.is_grabbed() && (!keyboard.is_grabbed() || input_method.keyboard_grabbed())
+        {
+            let output = self
+                .space
+                .output_under(self.pointer.current_location())
+                .next()
+                .cloned();
+            if let Some(output) = output.as_ref() {
+                let output_geo = self.space.output_geometry(output).unwrap();
+                if let Some(window) = output
+                    .user_data()
+                    .get::<FullscreenSurface>()
+                    .and_then(|f| f.get())
+                {
+                    if let Some((_, _)) = window.surface_under(
+                        self.pointer.current_location() - output_geo.loc.to_f64(),
+                        WindowSurfaceType::ALL,
+                    ) {
+                        #[cfg(feature = "xwayland")]
+                        if let WindowElement::X11(surf) = &window {
+                            self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
+                        }
+                        keyboard.set_focus(self, Some(window.into()), serial);
+                        return;
+                    }
+                }
+
+                let layers = layer_map_for_output(output);
+                if let Some(layer) = layers
+                    .layer_under(WlrLayer::Overlay, self.pointer.current_location())
+                    .or_else(|| layers.layer_under(WlrLayer::Top, self.pointer.current_location()))
+                {
+                    if layer.can_receive_keyboard_focus() {
+                        if let Some((_, _)) = layer.surface_under(
+                            self.pointer.current_location()
+                                - output_geo.loc.to_f64()
+                                - layers.layer_geometry(layer).unwrap().loc.to_f64(),
+                            WindowSurfaceType::ALL,
+                        ) {
+                            keyboard.set_focus(self, Some(layer.clone().into()), serial);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            if let Some((window, _)) = self
+                .space
+                .element_under(self.pointer.current_location())
+                .map(|(w, p)| (w.clone(), p))
+            {
+                self.space.raise_element(&window, true);
+                keyboard.set_focus(self, Some(window.clone().into()), serial);
+                #[cfg(feature = "xwayland")]
+                if let WindowElement::X11(surf) = &window {
+                    self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
+                }
+                return;
+            }
+
+            if let Some(output) = output.as_ref() {
+                let output_geo = self.space.output_geometry(output).unwrap();
+                let layers = layer_map_for_output(output);
+                if let Some(layer) = layers
+                    .layer_under(WlrLayer::Bottom, self.pointer.current_location())
+                    .or_else(|| {
+                        layers.layer_under(WlrLayer::Background, self.pointer.current_location())
+                    })
+                {
+                    if layer.can_receive_keyboard_focus() {
+                        if let Some((_, _)) = layer.surface_under(
+                            self.pointer.current_location()
+                                - output_geo.loc.to_f64()
+                                - layers.layer_geometry(layer).unwrap().loc.to_f64(),
+                            WindowSurfaceType::ALL,
+                        ) {
+                            keyboard.set_focus(self, Some(layer.clone().into()), serial);
+                        }
+                    }
+                }
+            }
         }
     }
 }

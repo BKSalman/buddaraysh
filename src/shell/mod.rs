@@ -1,5 +1,9 @@
+use std::cell::RefCell;
+
 use smithay::{
     desktop::{layer_map_for_output, Space},
+    output::Output,
+    reexports::wayland_server::protocol::{wl_output::WlOutput, wl_surface::WlSurface},
     utils::{Logical, Point, Rectangle},
 };
 
@@ -49,4 +53,45 @@ fn place_new_window(
     let y = y_range.sample(&mut rng);
 
     space.map_element(window.clone(), (x, y), activate);
+}
+
+fn fullscreen_output_geometry(
+    wl_surface: &WlSurface,
+    wl_output: Option<&WlOutput>,
+    space: &mut Space<WindowElement>,
+) -> Option<Rectangle<i32, Logical>> {
+    // First test if a specific output has been requested
+    // if the requested output is not found ignore the request
+    wl_output
+        .and_then(Output::from_resource)
+        .or_else(|| {
+            let w = space
+                .elements()
+                .find(|window| {
+                    window
+                        .wl_surface()
+                        .map(|s| s == *wl_surface)
+                        .unwrap_or(false)
+                })
+                .cloned();
+            w.and_then(|w| space.outputs_for_element(&w).get(0).cloned())
+        })
+        .and_then(|o| space.output_geometry(&o))
+}
+
+#[derive(Default)]
+pub struct FullscreenSurface(RefCell<Option<WindowElement>>);
+
+impl FullscreenSurface {
+    pub fn set(&self, window: WindowElement) {
+        *self.0.borrow_mut() = Some(window);
+    }
+
+    pub fn get(&self) -> Option<WindowElement> {
+        self.0.borrow().clone()
+    }
+
+    pub fn clear(&self) -> Option<WindowElement> {
+        self.0.borrow_mut().take()
+    }
 }

@@ -74,6 +74,7 @@ pub struct Buddaraysh<BackendData: Backend + 'static> {
     // Smithay State
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
+    pub xdg_activation_state: XdgActivationState,
     pub wlr_layer_shell_state: WlrLayerShellState,
     pub data_control_state: DataControlState,
     pub shm_state: ShmState,
@@ -111,33 +112,38 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
 
         let clock = Clock::new();
 
-        let dh = display.handle();
+        let display_handle = display.handle();
 
-        let compositor_state = CompositorState::new::<Self>(&dh);
-        let xdg_shell_state = XdgShellState::new::<Self>(&dh);
-        let wlr_layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
-        let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
-        let data_control_state =
-            DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |_| true);
-        let shm_state = ShmState::new::<Self>(&dh, vec![]);
-        let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
+        let compositor_state = CompositorState::new::<Self>(&display_handle);
+        let xdg_shell_state = XdgShellState::new::<Self>(&display_handle);
+        let xdg_activation_state = XdgActivationState::new::<Self>(&display_handle);
+        let wlr_layer_shell_state = WlrLayerShellState::new::<Self>(&display_handle);
+        let primary_selection_state = PrimarySelectionState::new::<Self>(&display_handle);
+        let data_control_state = DataControlState::new::<Self, _>(
+            &display_handle,
+            Some(&primary_selection_state),
+            |_| true,
+        );
+        let shm_state = ShmState::new::<Self>(&display_handle, vec![]);
+        let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
         let mut seat_state = SeatState::new();
-        let data_device_state = DataDeviceState::new::<Self>(&dh);
+        let data_device_state = DataDeviceState::new::<Self>(&display_handle);
         let popups = PopupManager::default();
-        let presentation_state = PresentationState::new::<Self>(&dh, clock.id() as u32);
+        let presentation_state = PresentationState::new::<Self>(&display_handle, clock.id() as u32);
         let keyboard_shortcuts_inhibit_state =
             KeyboardShortcutsInhibitState::new::<Self>(&display_handle);
 
         // A seat is a group of keyboards, pointer and touch devices.
         // A seat typically has a pointer and maintains a keyboard focus and a pointer focus.
         let seat_name = backend_data.seat_name();
-        let mut seat = seat_state.new_wl_seat(&dh, seat_name.clone());
+        let mut seat = seat_state.new_wl_seat(&display_handle, seat_name.clone());
 
         // Notify clients that we have a keyboard, for the sake of the example we assume that keyboard is always present.
         // You may want to track keyboard hot-plug in real compositor.
         seat.add_keyboard(
             smithay::input::keyboard::XkbConfig {
                 layout: "us,ara",
+                options: Some(String::from("grp:alt_shift_toggle")),
                 ..Default::default()
             },
             200,
@@ -157,6 +163,8 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
 
         let socket_name = Self::init_wayland_listener(display, event_loop);
 
+        std::env::set_var("WAYLAND_DISPLAY", &socket_name);
+
         // Get the loop signal, used to stop the event loop
         let loop_signal = event_loop.get_signal();
 
@@ -164,10 +172,10 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
 
         #[cfg(feature = "xwayland")]
         let xwayland = {
-            XWaylandKeyboardGrabState::new::<Self>(&dh);
+            XWaylandKeyboardGrabState::new::<Self>(&display_handle);
 
-            let (xwayland, channel) = XWayland::new(&dh);
-            let dh = dh.clone();
+            let (xwayland, channel) = XWayland::new(&display_handle);
+            let display_handle = display_handle.clone();
             let ret = loop_handle.insert_source(channel, move |event, _, data| match event {
                 XWaylandEvent::Ready {
                     connection,
@@ -177,7 +185,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
                 } => {
                     let mut wm = X11Wm::start_wm(
                         data.state.loop_handle.clone(),
-                        dh.clone(),
+                        display_handle.clone(),
                         connection,
                         client,
                     )
@@ -208,7 +216,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
 
         Self {
             start_time,
-            display_handle: dh,
+            display_handle,
 
             space,
             loop_signal,
@@ -216,10 +224,14 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
 
             compositor_state,
             xdg_shell_state,
+            xdg_activation_state,
             shm_state,
             output_manager_state,
             seat_state,
             data_device_state,
+            primary_selection_state,
+            wlr_layer_shell_state,
+            data_control_state,
             presentation_state,
             popups,
             keyboard_shortcuts_inhibit_state,
@@ -234,9 +246,6 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             cursor_status,
             seat_name,
             running: Arc::new(AtomicBool::new(true)),
-            primary_selection_state,
-            wlr_layer_shell_state,
-            data_control_state,
             #[cfg(feature = "xwayland")]
             xwayland,
             #[cfg(feature = "xwayland")]
@@ -296,12 +305,36 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         &self,
         pos: Point<f64, Logical>,
     ) -> Option<(FocusTarget, Point<i32, Logical>)> {
-        self.space.element_under(pos).map(|(window, location)| {
-            // window
-            //     .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
-            //     .map(|(s, p)| (s, p + location))
-            (FocusTarget::from(window.clone()), location)
-        })
+        let output = self.space.outputs().find(|o| {
+            let geometry = self.space.output_geometry(o).unwrap();
+            geometry.contains(pos.to_i32_round())
+        })?;
+        let output_geo = self.space.output_geometry(output).unwrap();
+        let layers = layer_map_for_output(output);
+
+        let mut under = None;
+        if let Some(window) = output
+            .user_data()
+            .get::<FullscreenSurface>()
+            .and_then(|f| f.get())
+        {
+            under = Some((window.into(), output_geo.loc));
+        } else if let Some(layer) = layers
+            .layer_under(WlrLayer::Overlay, pos)
+            .or_else(|| layers.layer_under(WlrLayer::Top, pos))
+        {
+            let layer_loc = layers.layer_geometry(layer).unwrap().loc;
+            under = Some((layer.clone().into(), output_geo.loc + layer_loc))
+        } else if let Some((window, location)) = self.space.element_under(pos) {
+            under = Some((window.clone().into(), location));
+        } else if let Some(layer) = layers
+            .layer_under(WlrLayer::Bottom, pos)
+            .or_else(|| layers.layer_under(WlrLayer::Background, pos))
+        {
+            let layer_loc = layers.layer_geometry(layer).unwrap().loc;
+            under = Some((layer.clone().into(), output_geo.loc + layer_loc));
+        };
+        under
     }
 }
 

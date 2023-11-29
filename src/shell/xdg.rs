@@ -1,16 +1,17 @@
 use std::cell::RefCell;
 
 use smithay::{
-    delegate_xdg_shell,
+    delegate_xdg_activation, delegate_xdg_shell,
     desktop::{space::SpaceElement, PopupKind, PopupManager, Space, Window},
     input::{
         pointer::{Focus, GrabStartData as PointerGrabStartData},
         Seat,
     },
+    output::Output,
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{
-            protocol::{wl_seat, wl_surface::WlSurface},
+            protocol::{wl_output::WlOutput, wl_seat, wl_surface::WlSurface},
             Resource,
         },
     },
@@ -22,14 +23,19 @@ use smithay::{
             PopupSurface, PositionerState, ToplevelSurface, XdgPopupSurfaceData, XdgShellHandler,
             XdgShellState, XdgToplevelSurfaceData,
         },
+        xdg_activation::XdgActivationHandler,
     },
 };
+use tracing::{debug, trace};
 
 use crate::{
     grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
+    shell::FullscreenSurface,
     window::WindowElement,
     Backend, Buddaraysh,
 };
+
+use super::{fullscreen_output_geometry, place_new_window};
 
 impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData> {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -38,11 +44,16 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let window = WindowElement::Wayland(Window::new(surface));
-        self.space.map_element(window, (0, 0), false);
+        place_new_window(
+            &mut self.space,
+            self.pointer.current_location(),
+            &window,
+            true,
+        );
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
-        let _ = self.popups.track_popup(PopupKind::Xdg(surface));
+        let _ = self.popups.track_popup(PopupKind::from(surface));
     }
 
     fn reposition_request(
@@ -64,34 +75,8 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
-        let seat = Seat::from_resource(&seat).unwrap();
-
-        let wl_surface = surface.wl_surface();
-
-        if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
-            let pointer = seat.get_pointer().unwrap();
-
-            let window = self
-                .space
-                .elements()
-                .find(|window| {
-                    window
-                        .wl_surface()
-                        .map(|s| s == *surface.wl_surface())
-                        .unwrap_or(false)
-                })
-                .unwrap()
-                .clone();
-            let initial_window_location = self.space.element_location(&window).unwrap();
-
-            let grab = MoveSurfaceGrab {
-                start_data,
-                window,
-                initial_window_location,
-            };
-
-            pointer.set_grab(self, grab, serial, Focus::Clear);
-        }
+        let seat: Seat<Buddaraysh<BackendData>> = Seat::from_resource(&seat).unwrap();
+        self.move_request_xdg(&surface, &seat, serial)
     }
 
     fn resize_request(
@@ -103,63 +88,102 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
     ) {
         let seat = Seat::from_resource(&seat).unwrap();
 
-        let wl_surface = surface.wl_surface();
-
-        if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
-            let pointer = seat.get_pointer().unwrap();
-
-            let window = self
-                .space
-                .elements()
-                .find(|window| {
-                    window
-                        .wl_surface()
-                        .map(|s| s == *wl_surface)
-                        .unwrap_or(false)
-                })
-                .unwrap()
-                .clone();
-            let initial_window_location = self.space.element_location(&window).unwrap();
-            let initial_window_size = window.geometry().size;
-
-            surface.with_pending_state(|state| {
-                state.states.set(xdg_toplevel::State::Resizing);
-            });
-
-            surface.send_pending_configure();
-
-            let initial_rect =
-                Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
-
-            compositor::with_states(surface.wl_surface(), |states| {
-                states
-                    .data_map
-                    .insert_if_missing(RefCell::<ResizeSurfaceState>::default);
-                let state = states
-                    .data_map
-                    .get::<RefCell<ResizeSurfaceState>>()
-                    .unwrap();
-
-                *state.borrow_mut() = ResizeSurfaceState::Resizing {
-                    edges: edges.into(),
-                    initial_rect,
-                };
-            });
-
-            let grab = ResizeSurfaceGrab {
-                start_data,
-                window,
-                edges: edges.into(),
-                initial_rect,
-                last_window_size: initial_rect.size,
-            };
-
-            pointer.set_grab(self, grab, serial, Focus::Clear);
-        }
+        self.resize_request_xdg(surface, seat, serial, edges);
     }
 
     fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
         // TODO popup grabs
+    }
+
+    fn maximize_request(&mut self, surface: ToplevelSurface) {
+        // TODO
+        surface.send_configure();
+    }
+
+    fn unmaximize_request(&mut self, surface: ToplevelSurface) {
+        // TODO
+    }
+
+    fn fullscreen_request(&mut self, surface: ToplevelSurface, mut wl_output: Option<WlOutput>) {
+        if surface
+            .current_state()
+            .capabilities
+            .contains(xdg_toplevel::WmCapabilities::Fullscreen)
+        {
+            // NOTE: This is only one part of the solution. We can set the
+            // location and configure size here, but the surface should be rendered fullscreen
+            // independently from its buffer size
+            let wl_surface = surface.wl_surface();
+
+            let output_geometry =
+                fullscreen_output_geometry(wl_surface, wl_output.as_ref(), &mut self.space);
+
+            if let Some(geometry) = output_geometry {
+                let output = wl_output
+                    .as_ref()
+                    .and_then(Output::from_resource)
+                    .unwrap_or_else(|| self.space.outputs().next().unwrap().clone());
+                let client = self.display_handle.get_client(wl_surface.id()).unwrap();
+                for output in output.client_outputs(&client) {
+                    wl_output = Some(output);
+                }
+                let window = self
+                    .space
+                    .elements()
+                    .find(|window| {
+                        window
+                            .wl_surface()
+                            .map(|s| s == *wl_surface)
+                            .unwrap_or(false)
+                    })
+                    .unwrap();
+
+                surface.with_pending_state(|state| {
+                    state.states.set(xdg_toplevel::State::Fullscreen);
+                    state.size = Some(geometry.size);
+                    state.fullscreen_output = wl_output;
+                });
+                output
+                    .user_data()
+                    .insert_if_missing(FullscreenSurface::default);
+                output
+                    .user_data()
+                    .get::<FullscreenSurface>()
+                    .unwrap()
+                    .set(window.clone());
+                trace!("Fullscreening: {:?}", window);
+            }
+        }
+
+        // The protocol demands us to always reply with a configure,
+        // regardless of we fulfilled the request or not
+        surface.send_configure();
+    }
+
+    fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+        if !surface
+            .current_state()
+            .states
+            .contains(xdg_toplevel::State::Fullscreen)
+        {
+            return;
+        }
+
+        let ret = surface.with_pending_state(|state| {
+            state.states.unset(xdg_toplevel::State::Fullscreen);
+            state.size = None;
+            state.fullscreen_output.take()
+        });
+        if let Some(output) = ret {
+            let output = Output::from_resource(&output).unwrap();
+            if let Some(fullscreen) = output.user_data().get::<FullscreenSurface>() {
+                trace!("Unfullscreening: {:?}", fullscreen.get());
+                fullscreen.clear();
+                self.backend_data.reset_buffers(&output);
+            }
+        }
+
+        surface.send_pending_configure();
     }
 }
 
@@ -300,7 +324,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
             // 3) multiply the percentage by new window width
             // 4) by doing that, drag will look a lot more natural
             //
-            // but for anvil needs setting location to pointer location is fine
+            // but for now setting location to pointer location is fine
             let pos = pointer.current_location();
             initial_window_location = (pos.x as i32, pos.y as i32).into();
         }
@@ -313,4 +337,83 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
 
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }
+
+    pub fn resize_request_xdg(
+        &mut self,
+        surface: ToplevelSurface,
+        seat: Seat<Buddaraysh<BackendData>>,
+        serial: Serial,
+        edges: xdg_toplevel::ResizeEdge,
+    ) {
+        let wl_surface = surface.wl_surface();
+
+        if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
+            let pointer = seat.get_pointer().unwrap();
+
+            let window = self
+                .space
+                .elements()
+                .find(|window| {
+                    window
+                        .wl_surface()
+                        .map(|s| s == *wl_surface)
+                        .unwrap_or(false)
+                })
+                .unwrap()
+                .clone();
+            let initial_window_location = self.space.element_location(&window).unwrap();
+            let initial_window_size = window.geometry().size;
+
+            surface.with_pending_state(|state| {
+                state.states.set(xdg_toplevel::State::Resizing);
+            });
+
+            surface.send_pending_configure();
+
+            let initial_rect =
+                Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
+
+            compositor::with_states(surface.wl_surface(), |states| {
+                states
+                    .data_map
+                    .insert_if_missing(RefCell::<ResizeSurfaceState>::default);
+                let state = states
+                    .data_map
+                    .get::<RefCell<ResizeSurfaceState>>()
+                    .unwrap();
+
+                *state.borrow_mut() = ResizeSurfaceState::Resizing {
+                    edges: edges.into(),
+                    initial_rect,
+                };
+            });
+
+            let grab = ResizeSurfaceGrab {
+                start_data,
+                window,
+                edges: edges.into(),
+                initial_rect,
+                last_window_size: initial_rect.size,
+            };
+
+            pointer.set_grab(self, grab, serial, Focus::Clear);
+        }
+    }
 }
+
+impl<BackendData: Backend + 'static> XdgActivationHandler for Buddaraysh<BackendData> {
+    fn activation_state(&mut self) -> &mut smithay::wayland::xdg_activation::XdgActivationState {
+        &mut self.xdg_activation_state
+    }
+
+    fn request_activation(
+        &mut self,
+        token: smithay::wayland::xdg_activation::XdgActivationToken,
+        token_data: smithay::wayland::xdg_activation::XdgActivationTokenData,
+        surface: WlSurface,
+    ) {
+        debug!("activation request");
+    }
+}
+
+delegate_xdg_activation!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);

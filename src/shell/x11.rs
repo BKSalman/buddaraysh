@@ -1,9 +1,11 @@
 use std::{cell::RefCell, os::unix::io::OwnedFd};
 
 use smithay::{
+    desktop::space::SpaceElement,
     input::pointer::Focus,
     utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
+        compositor,
         selection::data_device::{
             clear_data_device_selection, current_data_device_selection_userdata,
             request_data_device_client_selection, set_data_device_selection,
@@ -22,18 +24,14 @@ use smithay::{
 use tracing::{error, trace};
 
 use crate::{
-    focus::FocusTarget, grabs::MoveSurfaceGrab, window::WindowElement, Backend, Buddaraysh,
-    CalloopData,
+    focus::FocusTarget,
+    grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
+    shell::FullscreenSurface,
+    window::WindowElement,
+    Backend, Buddaraysh, CalloopData,
 };
 
 use super::place_new_window;
-
-// use crate::{focus::FocusTarget, state::Backend, AnvilState, CalloopData};
-
-// use super::{
-//     place_new_window, FullscreenSurface, MoveSurfaceGrab, ResizeData, ResizeState,
-//     ResizeSurfaceGrab, SurfaceData, WindowElement,
-// };
 
 #[derive(Debug, Default)]
 struct OldGeometry(RefCell<Option<Rectangle<i32, Logical>>>);
@@ -138,8 +136,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     }
 
     fn maximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        // TODO:
-        // self.state.maximize_request_x11(&window);
+        self.state.maximize_request_x11(&window);
     }
 
     fn unmaximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -165,126 +162,121 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     }
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        // TODO:
-        // if let Some(elem) = self
-        //     .state
-        //     .space
-        //     .elements()
-        //     .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
-        // {
-        //     let outputs_for_window = self.state.space.outputs_for_element(elem);
-        //     let output = outputs_for_window
-        //         .first()
-        //         // The window hasn't been mapped yet, use the primary output instead
-        //         .or_else(|| self.state.space.outputs().next())
-        //         // Assumes that at least one output exists
-        //         .expect("No outputs found");
-        //     let geometry = self.state.space.output_geometry(output).unwrap();
+        if let Some(elem) = self
+            .state
+            .space
+            .elements()
+            .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
+        {
+            let outputs_for_window = self.state.space.outputs_for_element(elem);
+            let output = outputs_for_window
+                .first()
+                // The window hasn't been mapped yet, use the primary output instead
+                .or_else(|| self.state.space.outputs().next())
+                // Assumes that at least one output exists
+                .expect("No outputs found");
+            let geometry = self.state.space.output_geometry(output).unwrap();
 
-        //     window.set_fullscreen(true).unwrap();
-        //     elem.set_ssd(false);
-        //     window.configure(geometry).unwrap();
-        //     output
-        //         .user_data()
-        //         .insert_if_missing(FullscreenSurface::default);
-        //     output
-        //         .user_data()
-        //         .get::<FullscreenSurface>()
-        //         .unwrap()
-        //         .set(elem.clone());
-        //     trace!("Fullscreening: {:?}", elem);
-        // }
+            window.set_fullscreen(true).unwrap();
+            elem.set_ssd(false);
+            window.configure(geometry).unwrap();
+            output
+                .user_data()
+                .insert_if_missing(FullscreenSurface::default);
+            output
+                .user_data()
+                .get::<FullscreenSurface>()
+                .unwrap()
+                .set(elem.clone());
+            trace!("Fullscreening: {:?}", elem);
+        }
     }
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        // TODO:
-        // if let Some(elem) = self
-        //     .state
-        //     .space
-        //     .elements()
-        //     .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
-        // {
-        //     window.set_fullscreen(false).unwrap();
-        //     elem.set_ssd(!window.is_decorated());
-        //     if let Some(output) = self.state.space.outputs().find(|o| {
-        //         o.user_data()
-        //             .get::<FullscreenSurface>()
-        //             .and_then(|f| f.get())
-        //             .map(|w| &w == elem)
-        //             .unwrap_or(false)
-        //     }) {
-        //         trace!("Unfullscreening: {:?}", elem);
-        //         output
-        //             .user_data()
-        //             .get::<FullscreenSurface>()
-        //             .unwrap()
-        //             .clear();
-        //         window
-        //             .configure(self.state.space.element_bbox(elem))
-        //             .unwrap();
-        //         self.state.backend_data.reset_buffers(output);
-        //     }
-        // }
+        if let Some(elem) = self
+            .state
+            .space
+            .elements()
+            .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
+        {
+            window.set_fullscreen(false).unwrap();
+            elem.set_ssd(!window.is_decorated());
+            if let Some(output) = self.state.space.outputs().find(|o| {
+                o.user_data()
+                    .get::<FullscreenSurface>()
+                    .and_then(|f| f.get())
+                    .map(|w| &w == elem)
+                    .unwrap_or(false)
+            }) {
+                trace!("Unfullscreening: {:?}", elem);
+                output
+                    .user_data()
+                    .get::<FullscreenSurface>()
+                    .unwrap()
+                    .clear();
+                window
+                    .configure(self.state.space.element_bbox(elem))
+                    .unwrap();
+                self.state.backend_data.reset_buffers(output);
+            }
+        }
     }
 
     fn resize_request(
         &mut self,
         _xwm: XwmId,
-        window: X11Surface,
+        x11_surface: X11Surface,
         _button: u32,
         edges: X11ResizeEdge,
     ) {
-        // TODO:
-        //     // luckily anvil only supports one seat anyway...
-        //     let start_data = self.state.pointer.grab_start_data().unwrap();
+        let start_data = self.state.pointer.grab_start_data().unwrap();
+        let pointer = self.state.pointer.clone();
+        let serial = SERIAL_COUNTER.next_serial();
 
-        //     let Some(element) = self
-        //         .state
-        //         .space
-        //         .elements()
-        //         .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
-        //     else {
-        //         return;
-        //     };
+        let Some(window) = self
+            .state
+            .space
+            .elements()
+            .find(|e| matches!(e, WindowElement::X11(w) if w == &x11_surface))
+        else {
+            return;
+        };
 
-        //     let geometry = element.geometry();
-        //     let loc = self.state.space.element_location(element).unwrap();
-        //     let (initial_window_location, initial_window_size) = (loc, geometry.size);
+        let geometry = window.geometry();
+        let loc = self.state.space.element_location(window).unwrap();
+        let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
-        //     with_states(&element.wl_surface().unwrap(), move |states| {
-        //         states
-        //             .data_map
-        //             .get::<RefCell<SurfaceData>>()
-        //             .unwrap()
-        //             .borrow_mut()
-        //             .resize_state = ResizeState::Resizing(ResizeData {
-        //             edges: edges.into(),
-        //             initial_window_location,
-        //             initial_window_size,
-        //         });
-        //     });
+        let initial_rect =
+            Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
 
-        //     let grab = ResizeSurfaceGrab {
-        //         start_data,
-        //         window: element.clone(),
-        //         edges: edges.into(),
-        //         initial_window_location,
-        //         initial_window_size,
-        //         last_window_size: initial_window_size,
-        //     };
+        compositor::with_states(&window.wl_surface().unwrap(), |states| {
+            states
+                .data_map
+                .insert_if_missing(RefCell::<ResizeSurfaceState>::default);
+            let state = states
+                .data_map
+                .get::<RefCell<ResizeSurfaceState>>()
+                .unwrap();
 
-        //     let pointer = self.state.pointer.clone();
-        //     pointer.set_grab(
-        //         &mut self.state,
-        //         grab,
-        //         SERIAL_COUNTER.next_serial(),
-        //         Focus::Clear,
-        //     );
+            *state.borrow_mut() = ResizeSurfaceState::Resizing {
+                edges: edges.into(),
+                initial_rect,
+            };
+        });
+
+        let grab = ResizeSurfaceGrab {
+            start_data,
+            window: window.clone(),
+            edges: edges.into(),
+            initial_rect,
+            last_window_size: initial_rect.size,
+        };
+
+        pointer.set_grab(&mut self.state, grab, serial, Focus::Clear);
     }
 
     fn move_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32) {
-        // TODO:
-        // self.state.move_request_x11(&window)
+        self.state.move_request_x11(&window);
     }
 
     fn allow_selection_access(&mut self, xwm: XwmId, _selection: SelectionTarget) -> bool {
@@ -395,7 +387,6 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
     }
 
     pub fn move_request_x11(&mut self, window: &X11Surface) {
-        // luckily anvil only supports one seat anyway...
         let Some(start_data) = self.pointer.grab_start_data() else {
             return;
         };

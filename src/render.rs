@@ -1,6 +1,6 @@
 use smithay::{
     backend::renderer::{
-        element::{surface::WaylandSurfaceRenderElement, RenderElement, Wrap},
+        element::{surface::WaylandSurfaceRenderElement, AsRenderElements, RenderElement, Wrap},
         ImportAll, ImportMem, Renderer,
     },
     desktop::space::{Space, SpaceRenderElements},
@@ -10,7 +10,8 @@ use smithay::{
 #[cfg(feature = "debug")]
 use crate::drawing::FpsElement;
 use crate::{
-    drawing::{PointerRenderElement, CLEAR_COLOR},
+    drawing::{PointerRenderElement, CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN},
+    shell::FullscreenSurface,
     window::{WindowElement, WindowRenderElement},
 };
 
@@ -131,6 +132,7 @@ pub fn output_elements<R>(
     space: &Space<WindowElement>,
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
     renderer: &mut R,
+    // show_window_preview: bool,
 ) -> (
     Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
     [f32; 4],
@@ -139,25 +141,46 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
 {
-    let mut output_render_elements = custom_elements
-        .into_iter()
-        .map(OutputRenderElements::from)
-        .collect::<Vec<_>>();
+    if let Some(window) = output
+        .user_data()
+        .get::<FullscreenSurface>()
+        .and_then(|f| f.get())
+    {
+        let scale = output.current_scale().fractional_scale().into();
+        let window_render_elements: Vec<WindowRenderElement<R>> =
+            AsRenderElements::<R>::render_elements(&window, renderer, (0, 0).into(), scale, 1.0);
 
-    // if show_window_preview && space.elements_for_output(output).count() > 0 {
-    //     output_render_elements.extend(space_preview_elements(renderer, space, output));
-    // }
+        let elements = custom_elements
+            .into_iter()
+            .map(OutputRenderElements::from)
+            .chain(
+                window_render_elements
+                    .into_iter()
+                    .map(|e| OutputRenderElements::Window(Wrap::from(e))),
+            )
+            .collect::<Vec<_>>();
+        (elements, CLEAR_COLOR_FULLSCREEN)
+    } else {
+        let mut output_render_elements = custom_elements
+            .into_iter()
+            .map(OutputRenderElements::from)
+            .collect::<Vec<_>>();
 
-    let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(
-        renderer,
-        [space],
-        output,
-        1.0,
-    )
-    .expect("output without mode?");
-    output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
+        // if show_window_preview && space.elements_for_output(output).count() > 0 {
+        //     output_render_elements.extend(space_preview_elements(renderer, space, output));
+        // }
 
-    (output_render_elements, CLEAR_COLOR)
+        let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(
+            renderer,
+            [space],
+            output,
+            1.0,
+        )
+        .expect("output without mode?");
+        output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
+
+        (output_render_elements, CLEAR_COLOR)
+    }
 }
 
 // #[allow(clippy::too_many_arguments)]

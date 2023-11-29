@@ -8,6 +8,7 @@ use smithay::{
     },
     input::Seat,
     utils::{Logical, Point, Serial},
+    wayland::shell::xdg::XdgShellHandler,
 };
 
 use std::cell::{RefCell, RefMut};
@@ -69,18 +70,18 @@ impl HeaderBar {
                     }
                 };
             }
-            // Some(loc) if loc.x >= (self.width - (BUTTON_WIDTH * 2)) as f64 => {
-            //     match window {
-            //         WindowElement::Wayland(w) => state.maximize_request(w.toplevel().clone()),
-            //         #[cfg(feature = "xwayland")]
-            //         WindowElement::X11(w) => {
-            //             let surface = w.clone();
-            //             state
-            //                 .loop_handle
-            //                 .insert_idle(move |data| data.state.maximize_request_x11(&surface));
-            //         }
-            //     };
-            // }
+            Some(loc) if loc.x >= (self.width - (BUTTON_WIDTH * 2)) as f64 => {
+                match window {
+                    WindowElement::Wayland(w) => state.maximize_request(w.toplevel().clone()),
+                    #[cfg(feature = "xwayland")]
+                    WindowElement::X11(w) => {
+                        let surface = w.clone();
+                        state
+                            .loop_handle
+                            .insert_idle(move |data| data.state.maximize_request_x11(&surface));
+                    }
+                };
+            }
             Some(_) => {
                 match window {
                     WindowElement::Wayland(w) => {
