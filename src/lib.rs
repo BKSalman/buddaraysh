@@ -1,9 +1,8 @@
-mod handlers;
-
 mod cursor;
 mod drawing;
 mod focus;
 mod grabs;
+mod handlers;
 mod input;
 mod protocols;
 mod render;
@@ -44,6 +43,7 @@ pub trait Backend {
 pub enum Action {
     Spawn(String),
     Quit,
+    SwitchToWorkspace(usize),
     None,
     Close,
 }

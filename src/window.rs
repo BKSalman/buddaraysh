@@ -750,8 +750,9 @@ where
 
 impl<BackendData: Backend> Buddaraysh<BackendData> {
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
-        self.space
-            .elements()
+        self.workspaces
+            .current_workspace()
+            .windows()
             .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
             .cloned()
     }

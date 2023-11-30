@@ -807,7 +807,11 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         if result.is_err() {
             state.running.store(false, Ordering::SeqCst);
         } else {
-            state.space.refresh();
+            state
+                .workspaces
+                .current_workspace_mut()
+                .space_mut()
+                .refresh();
             state.popups.cleanup();
             display_handle.flush_clients().unwrap();
         }
@@ -1013,14 +1017,23 @@ impl Buddaraysh<UdevData> {
             );
             let global = output.create_global::<Buddaraysh<UdevData>>(&self.display_handle);
 
-            let x = self.space.outputs().fold(0, |acc, o| {
-                acc + self.space.output_geometry(o).unwrap().size.w
+            // TODO: make this configurable
+            let x = self.workspaces.outputs().fold(0, |acc, o| {
+                acc + self
+                    .workspaces
+                    .current_workspace()
+                    .output_geometry(o)
+                    .unwrap()
+                    .size
+                    .w
             });
             let position = (x, 0).into();
 
             output.set_preferred(wl_mode);
             output.change_current_state(Some(wl_mode), None, None, Some(position));
-            self.space.map_output(&output, position);
+            for workspace in self.workspaces.workspaces_mut() {
+                workspace.add_output(&output, position);
+            }
 
             output.user_data().insert_if_missing(|| UdevOutputId {
                 crtc,
@@ -1239,7 +1252,7 @@ impl Buddaraysh<UdevData> {
             }
         };
 
-        let output = if let Some(output) = self.space.outputs().find(|o| {
+        let output = if let Some(output) = self.workspaces.outputs().find(|o| {
             o.user_data().get::<UdevOutputId>()
                 == Some(&UdevOutputId {
                     device_id: surface.device_id,
@@ -1477,7 +1490,7 @@ impl Buddaraysh<UdevData> {
                 texture
             });
 
-        let output = if let Some(output) = self.space.outputs().find(|o| {
+        let output = if let Some(output) = self.workspaces.outputs().find(|o| {
             o.user_data().get::<UdevOutputId>()
                 == Some(&UdevOutputId {
                     device_id: surface.device_id,
@@ -1493,7 +1506,7 @@ impl Buddaraysh<UdevData> {
         let result = render_surface(
             surface,
             &mut renderer,
-            &self.space,
+            self.workspaces.current_workspace().space(),
             &output,
             self.pointer.current_location(),
             &pointer_image,
@@ -1988,7 +2001,7 @@ fn initial_render(
 
 impl ScreencopyHandler for Buddaraysh<UdevData> {
     fn output(&mut self, output: &WlOutput) -> &Output {
-        self.space.outputs().find(|o| o.owns(output)).unwrap()
+        self.workspaces.outputs().find(|o| o.owns(output)).unwrap()
     }
 
     fn frame(&mut self, frame: Screencopy) {

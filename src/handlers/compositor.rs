@@ -94,10 +94,18 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
             }
         };
 
-        ensure_initial_configure(surface, &self.space, &mut self.popups);
+        ensure_initial_configure(
+            surface,
+            self.workspaces.current_workspace().space(),
+            &mut self.popups,
+        );
 
-        shell::xdg::handle_commit(&mut self.popups, &self.space, surface);
-        resize_grab::handle_commit(&mut self.space, surface);
+        shell::xdg::handle_commit(
+            &mut self.popups,
+            self.workspaces.current_workspace().space(),
+            surface,
+        );
+        resize_grab::handle_commit(self.workspaces.current_workspace_mut().space_mut(), surface);
     }
 }
 

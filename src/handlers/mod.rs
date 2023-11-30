@@ -5,10 +5,6 @@ mod layer_shell;
 use crate::focus::FocusTarget;
 use crate::{Backend, Buddaraysh};
 
-//
-// Wl Seat
-//
-
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;

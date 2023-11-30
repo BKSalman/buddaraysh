@@ -43,15 +43,49 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         state: KeyState,
     ) -> Option<Action> {
         if state == KeyState::Pressed && !self.seat.keyboard_shortcuts_inhibited() {
+            if modifiers.logo && keysym == Keysym::_1 {
+                return Some(Action::SwitchToWorkspace(0));
+            }
+            if modifiers.logo && keysym == Keysym::_2 {
+                return Some(Action::SwitchToWorkspace(1));
+            }
+            if modifiers.logo && keysym == Keysym::_3 {
+                return Some(Action::SwitchToWorkspace(2));
+            }
+            if modifiers.logo && keysym == Keysym::_4 {
+                return Some(Action::SwitchToWorkspace(3));
+            }
+            if modifiers.logo && keysym == Keysym::_5 {
+                return Some(Action::SwitchToWorkspace(4));
+            }
+            if modifiers.logo && keysym == Keysym::_6 {
+                return Some(Action::SwitchToWorkspace(5));
+            }
+            if modifiers.logo && keysym == Keysym::_7 {
+                return Some(Action::SwitchToWorkspace(6));
+            }
+            if modifiers.logo && keysym == Keysym::_8 {
+                return Some(Action::SwitchToWorkspace(7));
+            }
+            if modifiers.logo && keysym == Keysym::_9 {
+                return Some(Action::SwitchToWorkspace(8));
+            }
+
             if modifiers.logo && keysym == Keysym::c {
                 return Some(Action::Close);
-            } else if modifiers.logo && keysym == Keysym::q {
+            }
+
+            if modifiers.logo && keysym == Keysym::q {
                 return Some(Action::Spawn(String::from("kitty")));
-            } else if modifiers.logo && keysym == Keysym::d {
+            }
+
+            if modifiers.logo && keysym == Keysym::d {
                 return Some(Action::Spawn(String::from(
                     "pkill rofi || ~/.config/rofi/launcher.sh",
                 )));
-            } else if modifiers.logo && modifiers.shift && keysym == Keysym::X {
+            }
+
+            if modifiers.logo && modifiers.shift && keysym == Keysym::X {
                 return Some(Action::Quit);
             }
         }
@@ -101,6 +135,11 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                     }
                 }
             }
+            Action::SwitchToWorkspace(workspace_index) => {
+                if let None = self.workspaces.set_current_workspace(workspace_index) {
+                    error!("workspace index does not exist");
+                }
+            }
             Action::None => {}
         }
     }
@@ -137,9 +176,13 @@ impl Buddaraysh<WinitData> {
             }
             InputEvent::PointerMotion { .. } => {}
             InputEvent::PointerMotionAbsolute { event, .. } => {
-                let output = self.space.outputs().next().unwrap();
+                let output = self.workspaces.outputs().next().unwrap();
 
-                let output_geo = self.space.output_geometry(output).unwrap();
+                let output_geo = self
+                    .workspaces
+                    .current_workspace()
+                    .output_geometry(output)
+                    .unwrap();
 
                 let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
 
@@ -172,28 +215,36 @@ impl Buddaraysh<WinitData> {
 
                 if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
                     if let Some((window, _loc)) = self
-                        .space
-                        .element_under(pointer.current_location())
+                        .workspaces
+                        .current_workspace()
+                        .window_under(pointer.current_location())
                         .map(|(w, l)| (w.clone(), l))
                     {
-                        self.space.raise_element(&window, true);
+                        self.workspaces
+                            .current_workspace_mut()
+                            .raise_window(&window, true);
                         keyboard.set_focus(self, Some(window.into()), serial);
-                        self.space.elements().for_each(|window| {
-                            if let WindowElement::Wayland(window) = window {
-                                window.toplevel().send_pending_configure();
-                            }
-                        });
+                        self.workspaces
+                            .current_workspace()
+                            .windows()
+                            .for_each(|window| {
+                                if let WindowElement::Wayland(window) = window {
+                                    window.toplevel().send_pending_configure();
+                                }
+                            });
                     } else {
-                        self.space.elements().for_each(|window| match window {
-                            WindowElement::Wayland(window) => {
-                                window.set_activated(false);
-                                window.toplevel().send_pending_configure();
-                            }
-                            #[cfg(feature = "xwayland")]
-                            WindowElement::X11(surface) => {
-                                let _ = surface.set_activated(false);
-                            }
-                        });
+                        self.workspaces.current_workspace().windows().for_each(
+                            |window| match window {
+                                WindowElement::Wayland(window) => {
+                                    window.set_activated(false);
+                                    window.toplevel().send_pending_configure();
+                                }
+                                #[cfg(feature = "xwayland")]
+                                WindowElement::X11(surface) => {
+                                    let _ = surface.set_activated(false);
+                                }
+                            },
+                        );
                         keyboard.set_focus(self, None, serial);
                     }
                 };
@@ -422,17 +473,36 @@ impl Buddaraysh<UdevData> {
             InputEvent::PointerMotionAbsolute { event, .. } => {
                 let serial = SERIAL_COUNTER.next_serial();
 
-                let max_x = self.space.outputs().fold(0, |acc, o| {
-                    acc + self.space.output_geometry(o).unwrap().size.w
+                let max_x = self.workspaces.outputs().fold(0, |acc, o| {
+                    acc + self
+                        .workspaces
+                        .current_workspace()
+                        .output_geometry(o)
+                        .unwrap()
+                        .size
+                        .w
                 });
 
                 let max_h_output = self
-                    .space
+                    .workspaces
                     .outputs()
-                    .max_by_key(|o| self.space.output_geometry(o).unwrap().size.h)
+                    .max_by_key(|o| {
+                        self.workspaces
+                            .current_workspace()
+                            .output_geometry(o)
+                            .unwrap()
+                            .size
+                            .h
+                    })
                     .unwrap();
 
-                let max_y = self.space.output_geometry(max_h_output).unwrap().size.h;
+                let max_y = self
+                    .workspaces
+                    .current_workspace()
+                    .output_geometry(max_h_output)
+                    .unwrap()
+                    .size
+                    .h;
 
                 let mut pointer_location =
                     (event.x_transformed(max_x), event.y_transformed(max_y)).into();
@@ -455,9 +525,10 @@ impl Buddaraysh<UdevData> {
                 pointer.frame(self);
             }
             InputEvent::PointerButton { event, .. } => {
-                let pointer = self.pointer.clone();
-
                 let serial = SERIAL_COUNTER.next_serial();
+                self.update_keyboard_focus(serial);
+
+                let pointer = self.pointer.clone();
 
                 let button = event.button_code();
 
@@ -468,54 +539,59 @@ impl Buddaraysh<UdevData> {
 
                     let modifiers = keyboard.modifier_state();
 
-                    // TODO: make this better dear mr.future Salman xqcL
-                    if modifiers.logo
-                        && button == BTN_LEFT
-                        && !keyboard.is_grabbed()
-                        && !pointer.is_grabbed()
-                    {
-                        if let Some((FocusTarget::Window(window), _loc)) =
-                            self.surface_under(pointer.current_location())
+                    if !self.seat.keyboard_shortcuts_inhibited() {
+                        // TODO: make this better dear mr.future Salman xqcL
+                        if modifiers.logo
+                            && button == BTN_LEFT
+                            && !keyboard.is_grabbed()
+                            && !pointer.is_grabbed()
                         {
-                            match window {
-                                WindowElement::Wayland(w) => {
-                                    let seat = self.seat.clone();
-                                    let toplevel = w.toplevel().clone();
-                                    self.loop_handle.insert_idle(move |data| {
-                                        data.state.move_request_xdg(&toplevel, &seat, serial)
-                                    });
-                                }
-                                #[cfg(feature = "xwayland")]
-                                WindowElement::X11(w) => {
-                                    let window = w.clone();
-                                    self.loop_handle.insert_idle(move |data| {
-                                        data.state.move_request_x11(&window)
-                                    });
+                            if let Some((FocusTarget::Window(window), _loc)) =
+                                self.surface_under(pointer.current_location())
+                            {
+                                match window {
+                                    WindowElement::Wayland(w) => {
+                                        let seat = self.seat.clone();
+                                        let toplevel = w.toplevel().clone();
+                                        self.loop_handle.insert_idle(move |data| {
+                                            data.state.move_request_xdg(&toplevel, &seat, serial)
+                                        });
+                                    }
+                                    #[cfg(feature = "xwayland")]
+                                    WindowElement::X11(w) => {
+                                        let window = w.clone();
+                                        self.loop_handle.insert_idle(move |data| {
+                                            data.state.move_request_x11(&window)
+                                        });
+                                    }
                                 }
                             }
                         }
-                    } else if modifiers.logo
-                        && button == BTN_RIGHT
-                        && !keyboard.is_grabbed()
-                        && !pointer.is_grabbed()
-                    {
-                        if let Some((FocusTarget::Window(window), _loc)) =
-                            self.surface_under(pointer.current_location())
+
+                        if modifiers.logo
+                            && button == BTN_RIGHT
+                            && !keyboard.is_grabbed()
+                            && !pointer.is_grabbed()
                         {
-                            match window {
-                                WindowElement::Wayland(ref w) => {
-                                    let seat = self.seat.clone();
-                                    let toplevel = w.toplevel().clone();
-                                    let pointer_location = pointer.current_location();
-                                    info!("pointer locatin: {pointer_location:#?}");
-                                    let window_location =
-                                        self.space.element_location(&window).unwrap();
-                                    let geometry = window.geometry();
-                                    info!("geometry: {geometry:#?}");
-                                    let diff = pointer_location - window_location.to_f64();
-                                    let half_width = (geometry.size.w / 2) as f64;
-                                    let half_height = (geometry.size.h / 2) as f64;
-                                    self.loop_handle.insert_idle(move |data| {
+                            if let Some((FocusTarget::Window(window), _loc)) =
+                                self.surface_under(pointer.current_location())
+                            {
+                                match window {
+                                    WindowElement::Wayland(ref w) => {
+                                        let seat = self.seat.clone();
+                                        let toplevel = w.toplevel().clone();
+                                        let pointer_location = pointer.current_location();
+                                        info!("pointer locatin: {pointer_location:#?}");
+                                        let window_location = self
+                                            .workspaces
+                                            .current_workspace()
+                                            .window_location(&window)
+                                            .unwrap();
+                                        let geometry = window.geometry();
+                                        info!("geometry: {geometry:#?}");
+                                        let diff = pointer_location - window_location.to_f64();
+                                        let half_width = (geometry.size.w / 2) as f64;
+                                        let half_height = (geometry.size.h / 2) as f64;
                                         let edge = if diff.x > half_width && diff.y > half_height {
                                             ResizeEdge::BottomRight
                                         } else if diff.x < half_width && diff.y < half_height {
@@ -527,21 +603,23 @@ impl Buddaraysh<UdevData> {
                                         } else {
                                             ResizeEdge::None
                                         };
-                                        data.state.resize_request_xdg(toplevel, seat, serial, edge)
-                                    });
-                                }
-                                #[cfg(feature = "xwayland")]
-                                WindowElement::X11(w) => {
-                                    let window = w.clone();
-                                    self.loop_handle.insert_idle(move |data| {
-                                        data.state.move_request_x11(&window)
-                                    });
+                                        self.loop_handle.insert_idle(move |data| {
+                                            data.state
+                                                .resize_request_xdg(toplevel, seat, serial, edge)
+                                        });
+                                    }
+                                    #[cfg(feature = "xwayland")]
+                                    WindowElement::X11(w) => {
+                                        let window = w.clone();
+                                        self.loop_handle.insert_idle(move |data| {
+                                            // TODO use resize_request_x11()
+                                            // data.state.move_request_x11(&window)
+                                        });
+                                    }
                                 }
                             }
                         }
                     }
-
-                    self.update_keyboard_focus(serial);
                 }
 
                 pointer.button(
@@ -599,23 +677,40 @@ impl Buddaraysh<UdevData> {
     }
 
     fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
-        if self.space.outputs().next().is_none() {
+        if self.workspaces.outputs().next().is_none() {
             return pos;
         }
 
         let (pos_x, pos_y) = pos.into();
-        let max_x = self.space.outputs().fold(0, |acc, o| {
-            acc + self.space.output_geometry(o).unwrap().size.w
+        let max_x = self.workspaces.outputs().fold(0, |acc, o| {
+            acc + self
+                .workspaces
+                .current_workspace()
+                .output_geometry(o)
+                .unwrap()
+                .size
+                .w
         });
         let clamped_x = pos_x.clamp(0.0, max_x as f64);
         let max_y = self
-            .space
+            .workspaces
             .outputs()
             .find(|o| {
-                let geo = self.space.output_geometry(o).unwrap();
+                let geo = self
+                    .workspaces
+                    .current_workspace()
+                    .output_geometry(o)
+                    .unwrap();
                 geo.contains((clamped_x as i32, 0))
             })
-            .map(|o| self.space.output_geometry(o).unwrap().size.h);
+            .map(|o| {
+                self.workspaces
+                    .current_workspace()
+                    .output_geometry(o)
+                    .unwrap()
+                    .size
+                    .h
+            });
 
         if let Some(max_y) = max_y {
             let clamped_y = pos_y.clamp(0.0, max_y as f64);
@@ -640,12 +735,16 @@ impl Buddaraysh<UdevData> {
         if !self.pointer.is_grabbed() && (!keyboard.is_grabbed() || input_method.keyboard_grabbed())
         {
             let output = self
-                .space
+                .workspaces
                 .output_under(self.pointer.current_location())
                 .next()
                 .cloned();
             if let Some(output) = output.as_ref() {
-                let output_geo = self.space.output_geometry(output).unwrap();
+                let output_geo = self
+                    .workspaces
+                    .current_workspace()
+                    .output_geometry(output)
+                    .unwrap();
                 if let Some(window) = output
                     .user_data()
                     .get::<FullscreenSurface>()
@@ -684,11 +783,14 @@ impl Buddaraysh<UdevData> {
             }
 
             if let Some((window, _)) = self
-                .space
-                .element_under(self.pointer.current_location())
+                .workspaces
+                .current_workspace()
+                .window_under(self.pointer.current_location())
                 .map(|(w, p)| (w.clone(), p))
             {
-                self.space.raise_element(&window, true);
+                self.workspaces
+                    .current_workspace_mut()
+                    .raise_window(&window, true);
                 keyboard.set_focus(self, Some(window.clone().into()), serial);
                 #[cfg(feature = "xwayland")]
                 if let WindowElement::X11(surf) = &window {
@@ -698,7 +800,11 @@ impl Buddaraysh<UdevData> {
             }
 
             if let Some(output) = output.as_ref() {
-                let output_geo = self.space.output_geometry(output).unwrap();
+                let output_geo = self
+                    .workspaces
+                    .current_workspace()
+                    .output_geometry(output)
+                    .unwrap();
                 let layers = layer_map_for_output(output);
                 if let Some(layer) = layers
                     .layer_under(WlrLayer::Bottom, self.pointer.current_location())

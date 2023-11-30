@@ -122,7 +122,11 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
             }
             #[cfg(feature = "xwayland")]
             WindowElement::X11(x11) => {
-                let location = data.space.element_location(&self.window).unwrap();
+                let location = data
+                    .workspaces
+                    .current_workspace()
+                    .window_location(&self.window)
+                    .unwrap();
                 x11.configure(Rectangle::from_loc_and_size(
                     location,
                     self.last_window_size,
@@ -172,7 +176,11 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
                 }
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(x11) => {
-                    let location = data.space.element_location(&self.window).unwrap();
+                    let location = data
+                        .workspaces
+                        .current_workspace()
+                        .window_location(&self.window)
+                        .unwrap();
                     x11.configure(Rectangle::from_loc_and_size(
                         location,
                         self.last_window_size,

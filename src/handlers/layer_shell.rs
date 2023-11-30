@@ -26,7 +26,7 @@ impl<BackendData: Backend + 'static> WlrLayerShellHandler for Buddaraysh<Backend
         let output = wl_output
             .as_ref()
             .and_then(Output::from_resource)
-            .unwrap_or_else(|| self.space.outputs().next().unwrap().clone());
+            .unwrap_or_else(|| self.workspaces.outputs().next().unwrap().clone());
         let layer_surface = smithay::desktop::LayerSurface::new(surface, namespace);
 
         {
@@ -44,7 +44,7 @@ impl<BackendData: Backend + 'static> WlrLayerShellHandler for Buddaraysh<Backend
     }
 
     fn layer_destroyed(&mut self, surface: LayerSurface) {
-        if let Some((mut map, layer)) = self.space.outputs().find_map(|o| {
+        if let Some((mut map, layer)) = self.workspaces.outputs().find_map(|o| {
             let map = layer_map_for_output(o);
             let layer = map
                 .layers()

@@ -54,8 +54,8 @@ use smithay::{
 };
 
 use crate::{
-    cursor::Cursor, focus::FocusTarget, shell::FullscreenSurface, window::WindowElement, Backend,
-    CalloopData,
+    cursor::Cursor, focus::FocusTarget, shell::FullscreenSurface, window::WindowElement,
+    workspace::Workspaces, Backend, CalloopData,
 };
 
 pub struct Buddaraysh<BackendData: Backend + 'static> {
@@ -68,7 +68,7 @@ pub struct Buddaraysh<BackendData: Backend + 'static> {
 
     pub backend_data: BackendData,
 
-    pub space: Space<WindowElement>,
+    pub workspaces: Workspaces,
     pub loop_signal: LoopSignal,
 
     // Smithay State
@@ -159,7 +159,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         //
         // Windows get a position and stacking order through mapping.
         // Outputs become views of a part of the Space and can be rendered via Space::render_output.
-        let space = Space::default();
+        // let space = Space::default();
 
         let socket_name = Self::init_wayland_listener(display, event_loop);
 
@@ -218,7 +218,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             start_time,
             display_handle,
 
-            space,
+            workspaces: Workspaces::default(),
             loop_signal,
             socket_name,
 
@@ -305,11 +305,19 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         &self,
         pos: Point<f64, Logical>,
     ) -> Option<(FocusTarget, Point<i32, Logical>)> {
-        let output = self.space.outputs().find(|o| {
-            let geometry = self.space.output_geometry(o).unwrap();
+        let output = self.workspaces.outputs().find(|o| {
+            let geometry = self
+                .workspaces
+                .current_workspace()
+                .output_geometry(o)
+                .unwrap();
             geometry.contains(pos.to_i32_round())
         })?;
-        let output_geo = self.space.output_geometry(output).unwrap();
+        let output_geo = self
+            .workspaces
+            .current_workspace()
+            .output_geometry(output)
+            .unwrap();
         let layers = layer_map_for_output(output);
 
         let mut under = None;
@@ -325,7 +333,9 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         {
             let layer_loc = layers.layer_geometry(layer).unwrap().loc;
             under = Some((layer.clone().into(), output_geo.loc + layer_loc))
-        } else if let Some((window, location)) = self.space.element_under(pos) {
+        } else if let Some((window, location)) =
+            self.workspaces.current_workspace().window_under(pos)
+        {
             under = Some((window.clone().into(), location));
         } else if let Some(layer) = layers
             .layer_under(WlrLayer::Bottom, pos)
@@ -370,8 +380,9 @@ impl ClientData for ClientState {
 impl<BackendData: Backend + 'static> XWaylandKeyboardGrabHandler for Buddaraysh<BackendData> {
     fn keyboard_focus_for_xsurface(&self, surface: &WlSurface) -> Option<FocusTarget> {
         let elem = self
-            .space
-            .elements()
+            .workspaces
+            .current_workspace()
+            .windows()
             .find(|elem| elem.wl_surface().as_ref() == Some(surface))?;
         Some(FocusTarget::Window(elem.clone()))
     }

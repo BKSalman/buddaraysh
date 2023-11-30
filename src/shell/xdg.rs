@@ -45,7 +45,7 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let window = WindowElement::Wayland(Window::new(surface));
         place_new_window(
-            &mut self.space,
+            self.workspaces.current_workspace_mut().space_mut(),
             self.pointer.current_location(),
             &window,
             true,
@@ -115,21 +115,25 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
             // independently from its buffer size
             let wl_surface = surface.wl_surface();
 
-            let output_geometry =
-                fullscreen_output_geometry(wl_surface, wl_output.as_ref(), &mut self.space);
+            let output_geometry = fullscreen_output_geometry(
+                wl_surface,
+                wl_output.as_ref(),
+                self.workspaces.current_workspace_mut().space_mut(),
+            );
 
             if let Some(geometry) = output_geometry {
                 let output = wl_output
                     .as_ref()
                     .and_then(Output::from_resource)
-                    .unwrap_or_else(|| self.space.outputs().next().unwrap().clone());
+                    .unwrap_or_else(|| self.workspaces.outputs().next().unwrap().clone());
                 let client = self.display_handle.get_client(wl_surface.id()).unwrap();
                 for output in output.client_outputs(&client) {
                     wl_output = Some(output);
                 }
                 let window = self
-                    .space
-                    .elements()
+                    .workspaces
+                    .current_workspace()
+                    .windows()
                     .find(|window| {
                         window
                             .wl_surface()
@@ -299,7 +303,11 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
             return;
         }
 
-        let mut initial_window_location = self.space.element_location(&window).unwrap();
+        let mut initial_window_location = self
+            .workspaces
+            .current_workspace()
+            .window_location(&window)
+            .unwrap();
 
         // If surface is maximized then unmaximize it
         let current_state = surface.current_state();
@@ -351,8 +359,9 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
             let pointer = seat.get_pointer().unwrap();
 
             let window = self
-                .space
-                .elements()
+                .workspaces
+                .current_workspace()
+                .windows()
                 .find(|window| {
                     window
                         .wl_surface()
@@ -361,7 +370,11 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 })
                 .unwrap()
                 .clone();
-            let initial_window_location = self.space.element_location(&window).unwrap();
+            let initial_window_location = self
+                .workspaces
+                .current_workspace()
+                .window_location(&window)
+                .unwrap();
             let initial_window_size = window.geometry().size;
 
             surface.with_pending_state(|state| {

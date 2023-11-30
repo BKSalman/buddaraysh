@@ -178,7 +178,9 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = &mut data.state;
 
-    state.space.map_output(&output, (0, 0));
+    for workspace in state.workspaces.workspaces_mut() {
+        workspace.add_output(&output, (0, 0));
+    }
 
     event_loop
         .handle()
@@ -270,7 +272,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                         renderer,
                         1.0,
                         0,
-                        [&state.space],
+                        [state.workspaces.current_workspace().space()],
                         &custom_elements,
                         &mut state.backend_data.damage_tracker,
                         [0.1, 0.1, 0.1, 1.0],
@@ -278,16 +280,24 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap();
                     state.backend_data.backend.submit(Some(&[damage])).unwrap();
 
-                    state.space.elements().for_each(|window| {
-                        window.send_frame(
-                            &output,
-                            state.start_time.elapsed(),
-                            Some(Duration::ZERO),
-                            |_, _| Some(output.clone()),
-                        )
-                    });
+                    state
+                        .workspaces
+                        .current_workspace()
+                        .windows()
+                        .for_each(|window| {
+                            window.send_frame(
+                                &output,
+                                state.start_time.elapsed(),
+                                Some(Duration::ZERO),
+                                |_, _| Some(output.clone()),
+                            )
+                        });
 
-                    state.space.refresh();
+                    state
+                        .workspaces
+                        .current_workspace_mut()
+                        .space_mut()
+                        .refresh();
                     state.popups.cleanup();
                     let _ = display.flush_clients();
 

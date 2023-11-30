@@ -57,12 +57,17 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         window.set_mapped(true).unwrap();
         let window = WindowElement::X11(window);
         place_new_window(
-            &mut self.state.space,
+            self.state.workspaces.current_workspace_mut().space_mut(),
             self.state.pointer.current_location(),
             &window,
             true,
         );
-        let bbox = self.state.space.element_bbox(&window).unwrap();
+        let bbox = self
+            .state
+            .workspaces
+            .current_workspace()
+            .window_bbox(&window)
+            .unwrap();
         let WindowElement::X11(xsurface) = &window else {
             unreachable!()
         };
@@ -73,18 +78,25 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
         let location = window.geometry().loc;
         let window = WindowElement::X11(window);
-        self.state.space.map_element(window, location, true);
+        self.state
+            .workspaces
+            .current_workspace_mut()
+            .map_window(window, location, true);
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
         let maybe = self
             .state
-            .space
-            .elements()
+            .workspaces
+            .current_workspace()
+            .windows()
             .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
             .cloned();
         if let Some(elem) = maybe {
-            self.state.space.unmap_elem(&elem)
+            self.state
+                .workspaces
+                .current_workspace_mut()
+                .unmap_window(&elem)
         }
         if !window.is_override_redirect() {
             window.set_mapped(false).unwrap();
@@ -123,14 +135,18 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     ) {
         let Some(elem) = self
             .state
-            .space
-            .elements()
+            .workspaces
+            .current_workspace()
+            .windows()
             .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
             .cloned()
         else {
             return;
         };
-        self.state.space.map_element(elem, geometry.loc, false);
+        self.state
+            .workspaces
+            .current_workspace_mut()
+            .map_window(elem, geometry.loc, false);
         // TODO: We don't properly handle the order of override-redirect windows here,
         //       they are always mapped top and then never reordered.
     }
@@ -142,8 +158,9 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     fn unmaximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
         let Some(elem) = self
             .state
-            .space
-            .elements()
+            .workspaces
+            .current_workspace()
+            .windows()
             .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
             .cloned()
         else {
@@ -157,25 +174,38 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
             .and_then(|data| data.restore())
         {
             window.configure(old_geo).unwrap();
-            self.state.space.map_element(elem, old_geo.loc, false);
+            self.state
+                .workspaces
+                .current_workspace_mut()
+                .map_window(elem, old_geo.loc, false);
         }
     }
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
         if let Some(elem) = self
             .state
-            .space
-            .elements()
+            .workspaces
+            .current_workspace()
+            .windows()
             .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
         {
-            let outputs_for_window = self.state.space.outputs_for_element(elem);
+            let outputs_for_window = self
+                .state
+                .workspaces
+                .current_workspace()
+                .outputs_for_window(elem);
             let output = outputs_for_window
                 .first()
                 // The window hasn't been mapped yet, use the primary output instead
-                .or_else(|| self.state.space.outputs().next())
+                .or_else(|| self.state.workspaces.outputs().next())
                 // Assumes that at least one output exists
                 .expect("No outputs found");
-            let geometry = self.state.space.output_geometry(output).unwrap();
+            let geometry = self
+                .state
+                .workspaces
+                .current_workspace()
+                .output_geometry(output)
+                .unwrap();
 
             window.set_fullscreen(true).unwrap();
             elem.set_ssd(false);
@@ -195,13 +225,14 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
         if let Some(elem) = self
             .state
-            .space
-            .elements()
+            .workspaces
+            .current_workspace()
+            .windows()
             .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
         {
             window.set_fullscreen(false).unwrap();
             elem.set_ssd(!window.is_decorated());
-            if let Some(output) = self.state.space.outputs().find(|o| {
+            if let Some(output) = self.state.workspaces.outputs().find(|o| {
                 o.user_data()
                     .get::<FullscreenSurface>()
                     .and_then(|f| f.get())
@@ -215,7 +246,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
                     .unwrap()
                     .clear();
                 window
-                    .configure(self.state.space.element_bbox(elem))
+                    .configure(self.state.workspaces.current_workspace().window_bbox(elem))
                     .unwrap();
                 self.state.backend_data.reset_buffers(output);
             }
@@ -235,15 +266,21 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
 
         let Some(window) = self
             .state
-            .space
-            .elements()
+            .workspaces
+            .current_workspace()
+            .windows()
             .find(|e| matches!(e, WindowElement::X11(w) if w == &x11_surface))
         else {
             return;
         };
 
         let geometry = window.geometry();
-        let loc = self.state.space.element_location(window).unwrap();
+        let loc = self
+            .state
+            .workspaces
+            .current_workspace()
+            .window_location(window)
+            .unwrap();
         let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
         let initial_rect =
@@ -357,23 +394,35 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
 impl<BackendData: Backend> Buddaraysh<BackendData> {
     pub fn maximize_request_x11(&mut self, window: &X11Surface) {
         let Some(elem) = self
-            .space
-            .elements()
+            .workspaces
+            .current_workspace()
+            .windows()
             .find(|e| matches!(e, WindowElement::X11(w) if w == window))
             .cloned()
         else {
             return;
         };
 
-        let old_geo = self.space.element_bbox(&elem).unwrap();
-        let outputs_for_window = self.space.outputs_for_element(&elem);
+        let old_geo = self
+            .workspaces
+            .current_workspace()
+            .window_bbox(&elem)
+            .unwrap();
+        let outputs_for_window = self
+            .workspaces
+            .current_workspace()
+            .outputs_for_window(&elem);
         let output = outputs_for_window
             .first()
             // The window hasn't been mapped yet, use the primary output instead
-            .or_else(|| self.space.outputs().next())
+            .or_else(|| self.workspaces.outputs().next())
             // Assumes that at least one output exists
             .expect("No outputs found");
-        let geometry = self.space.output_geometry(output).unwrap();
+        let geometry = self
+            .workspaces
+            .current_workspace()
+            .output_geometry(output)
+            .unwrap();
 
         window.set_maximized(true).unwrap();
         window.configure(geometry).unwrap();
@@ -383,7 +432,9 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
             .get::<OldGeometry>()
             .unwrap()
             .save(old_geo);
-        self.space.map_element(elem, geometry.loc, false);
+        self.workspaces
+            .current_workspace_mut()
+            .map_window(elem, geometry.loc, false);
     }
 
     pub fn move_request_x11(&mut self, window: &X11Surface) {
@@ -392,14 +443,19 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         };
 
         let Some(element) = self
-            .space
-            .elements()
+            .workspaces
+            .current_workspace()
+            .windows()
             .find(|e| matches!(e, WindowElement::X11(w) if w == window))
         else {
             return;
         };
 
-        let mut initial_window_location = self.space.element_location(element).unwrap();
+        let mut initial_window_location = self
+            .workspaces
+            .current_workspace()
+            .window_location(element)
+            .unwrap();
 
         // If surface is maximized then unmaximize it
         if window.is_maximized() {
