@@ -1,4 +1,4 @@
-use std::{process::Stdio, sync::atomic::Ordering};
+use std::{process::Stdio, sync::atomic::Ordering, time::Instant};
 
 use smithay::{
     backend::{
@@ -139,6 +139,23 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 if let None = self.workspaces.set_current_workspace(workspace_index) {
                     error!("workspace index does not exist");
                 }
+                let pointer = self.pointer.clone();
+                let now = Instant::now();
+                let time = now.duration_since(self.start_time).as_millis() as u32;
+                // this is to fix the button press being sent to the fullscreen
+                // surface when switching to another workspace
+                //
+                // but doesn't fix when switching back to the workspace with the
+                // fullscreen surface
+                pointer.motion(
+                    self,
+                    None,
+                    &MotionEvent {
+                        location: pointer.current_location(),
+                        serial: SERIAL_COUNTER.next_serial(),
+                        time,
+                    },
+                );
             }
             Action::None => {}
         }
@@ -745,10 +762,18 @@ impl Buddaraysh<UdevData> {
                     .current_workspace()
                     .output_geometry(output)
                     .unwrap();
-                if let Some(window) = output
-                    .user_data()
-                    .get::<FullscreenSurface>()
-                    .and_then(|f| f.get())
+                if let Some(window) =
+                    output
+                        .user_data()
+                        .get::<FullscreenSurface>()
+                        .and_then(|f| match f.get() {
+                            (Some(window), Some(workspace_index))
+                                if workspace_index == self.workspaces.current_workspace_index() =>
+                            {
+                                Some(window)
+                            }
+                            _ => None,
+                        })
                 {
                     if let Some((_, _)) = window.surface_under(
                         self.pointer.current_location() - output_geo.loc.to_f64(),

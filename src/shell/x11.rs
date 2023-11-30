@@ -213,11 +213,10 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
             output
                 .user_data()
                 .insert_if_missing(FullscreenSurface::default);
-            output
-                .user_data()
-                .get::<FullscreenSurface>()
-                .unwrap()
-                .set(elem.clone());
+            output.user_data().get::<FullscreenSurface>().unwrap().set(
+                elem.clone(),
+                self.state.workspaces.current_workspace_index(),
+            );
             trace!("Fullscreening: {:?}", elem);
         }
     }
@@ -235,7 +234,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
             if let Some(output) = self.state.workspaces.outputs().find(|o| {
                 o.user_data()
                     .get::<FullscreenSurface>()
-                    .and_then(|f| f.get())
+                    .and_then(|f| f.get().0)
                     .map(|w| &w == elem)
                     .unwrap_or(false)
             }) {

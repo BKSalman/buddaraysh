@@ -116,6 +116,7 @@ use crate::{
     render::{output_elements, CustomRenderElements},
     systemd,
     window::WindowElement,
+    workspace::Workspace,
     Backend, Buddaraysh, CalloopData,
 };
 
@@ -1516,6 +1517,7 @@ impl Buddaraysh<UdevData> {
             &self.clock,
             // self.show_window_preview,
             screencopy,
+            self.workspaces.current_workspace_index(),
         );
         let reschedule = match &result {
             Ok(has_rendered) => !has_rendered,
@@ -1685,6 +1687,7 @@ fn render_surface<'a, 'b, 'c>(
     clock: &Clock<Monotonic>,
     // show_window_preview: bool,
     screencopy: Option<Screencopy>,
+    current_workspace_index: usize,
 ) -> Result<bool, SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
@@ -1763,7 +1766,13 @@ fn render_surface<'a, 'b, 'c>(
         custom_elements.push(CustomRenderElements::Fps(element.clone()));
     }
 
-    let (elements, clear_color) = output_elements(output, space, custom_elements, renderer);
+    let (elements, clear_color) = output_elements(
+        output,
+        space,
+        custom_elements,
+        renderer,
+        current_workspace_index,
+    );
     let (res, frame_result) =
         surface
             .compositor

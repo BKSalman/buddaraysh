@@ -73,6 +73,10 @@ impl Workspaces {
         self.workspaces[self.current].outputs()
     }
 
+    pub fn current_workspace_index(&self) -> usize {
+        self.current
+    }
+
     pub fn current_workspace(&self) -> &Workspace {
         &self.workspaces[self.current]
     }
@@ -82,7 +86,7 @@ impl Workspaces {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, PartialEq, Debug)]
 pub struct Workspace {
     space: Space<WindowElement>,
 }

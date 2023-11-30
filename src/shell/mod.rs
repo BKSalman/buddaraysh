@@ -7,7 +7,7 @@ use smithay::{
     utils::{Logical, Point, Rectangle},
 };
 
-use crate::window::WindowElement;
+use crate::{window::WindowElement, workspace::Workspace};
 
 mod x11;
 pub mod xdg;
@@ -80,18 +80,25 @@ fn fullscreen_output_geometry(
 }
 
 #[derive(Default)]
-pub struct FullscreenSurface(RefCell<Option<WindowElement>>);
+pub struct FullscreenSurface {
+    window: RefCell<Option<WindowElement>>,
+    workspace_index: RefCell<Option<usize>>,
+}
 
 impl FullscreenSurface {
-    pub fn set(&self, window: WindowElement) {
-        *self.0.borrow_mut() = Some(window);
+    pub fn set(&self, window: WindowElement, workspace_index: usize) {
+        *self.window.borrow_mut() = Some(window);
+        *self.workspace_index.borrow_mut() = Some(workspace_index);
     }
 
-    pub fn get(&self) -> Option<WindowElement> {
-        self.0.borrow().clone()
+    pub fn get(&self) -> (Option<WindowElement>, Option<usize>) {
+        (
+            self.window.borrow().clone(),
+            self.workspace_index.borrow().clone(),
+        )
     }
 
-    pub fn clear(&self) -> Option<WindowElement> {
-        self.0.borrow_mut().take()
+    pub fn clear(&self) -> (Option<WindowElement>, Option<usize>) {
+        (self.window.borrow_mut().take(), self.workspace_index.take())
     }
 }

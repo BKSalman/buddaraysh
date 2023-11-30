@@ -154,7 +154,7 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
                     .user_data()
                     .get::<FullscreenSurface>()
                     .unwrap()
-                    .set(window.clone());
+                    .set(window.clone(), self.workspaces.current_workspace_index());
                 trace!("Fullscreening: {:?}", window);
             }
         }

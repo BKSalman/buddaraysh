@@ -321,10 +321,18 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         let layers = layer_map_for_output(output);
 
         let mut under = None;
-        if let Some(window) = output
-            .user_data()
-            .get::<FullscreenSurface>()
-            .and_then(|f| f.get())
+        if let Some(window) =
+            output
+                .user_data()
+                .get::<FullscreenSurface>()
+                .and_then(|f| match f.get() {
+                    (Some(window), Some(workspace_index))
+                        if workspace_index == self.workspaces.current_workspace_index() =>
+                    {
+                        Some(window)
+                    }
+                    _ => None,
+                })
         {
             under = Some((window.into(), output_geo.loc));
         } else if let Some(layer) = layers
