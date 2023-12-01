@@ -32,6 +32,13 @@ impl Default for Workspaces {
 }
 
 impl Workspaces {
+    pub fn get(&mut self, workspace_index: usize) -> Option<&Workspace> {
+        self.workspaces.get(workspace_index)
+    }
+
+    pub fn get_mut(&mut self, workspace_index: usize) -> Option<&mut Workspace> {
+        self.workspaces.get_mut(workspace_index)
+    }
     /// Sets the current workspace, and returns Some if the provided index exists, or None if it doesn't exist
     pub fn set_current_workspace(&mut self, workspace_index: usize) -> Option<&Workspace> {
         if let Some(workspace) = self.workspaces.get(workspace_index) {

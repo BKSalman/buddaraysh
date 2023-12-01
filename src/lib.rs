@@ -44,6 +44,7 @@ pub enum Action {
     Spawn(String),
     Quit,
     SwitchToWorkspace(usize),
+    MoveToWorkspace(usize),
     None,
     Close,
 }

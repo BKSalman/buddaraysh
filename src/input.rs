@@ -40,35 +40,16 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         &mut self,
         modifiers: &ModifiersState,
         keysym: Keysym,
+        raw_syms: &[Keysym],
         state: KeyState,
     ) -> Option<Action> {
         if state == KeyState::Pressed && !self.seat.keyboard_shortcuts_inhibited() {
-            if modifiers.logo && keysym == Keysym::_1 {
-                return Some(Action::SwitchToWorkspace(0));
+            if let Some(value) = move_to_workspace(modifiers, keysym, raw_syms) {
+                return value;
             }
-            if modifiers.logo && keysym == Keysym::_2 {
-                return Some(Action::SwitchToWorkspace(1));
-            }
-            if modifiers.logo && keysym == Keysym::_3 {
-                return Some(Action::SwitchToWorkspace(2));
-            }
-            if modifiers.logo && keysym == Keysym::_4 {
-                return Some(Action::SwitchToWorkspace(3));
-            }
-            if modifiers.logo && keysym == Keysym::_5 {
-                return Some(Action::SwitchToWorkspace(4));
-            }
-            if modifiers.logo && keysym == Keysym::_6 {
-                return Some(Action::SwitchToWorkspace(5));
-            }
-            if modifiers.logo && keysym == Keysym::_7 {
-                return Some(Action::SwitchToWorkspace(6));
-            }
-            if modifiers.logo && keysym == Keysym::_8 {
-                return Some(Action::SwitchToWorkspace(7));
-            }
-            if modifiers.logo && keysym == Keysym::_9 {
-                return Some(Action::SwitchToWorkspace(8));
+
+            if let Some(value) = switch_workspace(modifiers, keysym) {
+                return value;
             }
 
             if modifiers.logo && keysym == Keysym::c {
@@ -157,9 +138,151 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                     },
                 );
             }
+            Action::MoveToWorkspace(workspace_index) => {
+                if self.workspaces.current_workspace_index() == workspace_index {
+                    return;
+                }
+
+                let keyboard = self.seat.get_keyboard().unwrap();
+                if let Some(window) = keyboard
+                    .current_focus()
+                    .and_then(|t| t.wl_surface())
+                    .and_then(|s| self.window_for_surface(&s))
+                {
+                    let location = self
+                        .workspaces
+                        .current_workspace()
+                        .window_location(&window)
+                        .unwrap();
+
+                    self.workspaces
+                        .current_workspace_mut()
+                        .unmap_window(&window);
+
+                    if let Some(workspace) = self.workspaces.get_mut(workspace_index) {
+                        workspace.map_window(window, location, true);
+                    } else {
+                        self.workspaces
+                            .current_workspace_mut()
+                            .map_window(window, location, false);
+                        error!("invalid workspace index");
+                    }
+                }
+            }
             Action::None => {}
         }
     }
+}
+
+fn switch_workspace(modifiers: &ModifiersState, keysym: Keysym) -> Option<Option<Action>> {
+    if modifiers.logo && keysym == Keysym::_1 {
+        return Some(Some(Action::SwitchToWorkspace(0)));
+    }
+    if modifiers.logo && keysym == Keysym::_2 {
+        return Some(Some(Action::SwitchToWorkspace(1)));
+    }
+    if modifiers.logo && keysym == Keysym::_3 {
+        return Some(Some(Action::SwitchToWorkspace(2)));
+    }
+    if modifiers.logo && keysym == Keysym::_4 {
+        return Some(Some(Action::SwitchToWorkspace(3)));
+    }
+    if modifiers.logo && keysym == Keysym::_5 {
+        return Some(Some(Action::SwitchToWorkspace(4)));
+    }
+    if modifiers.logo && keysym == Keysym::_6 {
+        return Some(Some(Action::SwitchToWorkspace(5)));
+    }
+    if modifiers.logo && keysym == Keysym::_7 {
+        return Some(Some(Action::SwitchToWorkspace(6)));
+    }
+    if modifiers.logo && keysym == Keysym::_8 {
+        return Some(Some(Action::SwitchToWorkspace(7)));
+    }
+    if modifiers.logo && keysym == Keysym::_9 {
+        return Some(Some(Action::SwitchToWorkspace(8)));
+    }
+    None
+}
+
+fn move_to_workspace(
+    modifiers: &ModifiersState,
+    keysym: Keysym,
+    raw_syms: &[Keysym],
+) -> Option<Option<Action>> {
+    if modifiers.logo
+        && modifiers.shift
+        && !modifiers.alt
+        && !modifiers.ctrl
+        && raw_syms.contains(&Keysym::_1)
+    {
+        return Some(Some(Action::MoveToWorkspace(0)));
+    }
+    if modifiers.logo
+        && modifiers.shift
+        && !modifiers.alt
+        && !modifiers.ctrl
+        && raw_syms.contains(&Keysym::_2)
+    {
+        return Some(Some(Action::MoveToWorkspace(1)));
+    }
+    if modifiers.logo
+        && modifiers.shift
+        && !modifiers.alt
+        && !modifiers.ctrl
+        && raw_syms.contains(&Keysym::_3)
+    {
+        return Some(Some(Action::MoveToWorkspace(2)));
+    }
+    if modifiers.logo
+        && modifiers.shift
+        && !modifiers.alt
+        && !modifiers.ctrl
+        && raw_syms.contains(&Keysym::_4)
+    {
+        return Some(Some(Action::MoveToWorkspace(3)));
+    }
+    if modifiers.logo
+        && modifiers.shift
+        && !modifiers.alt
+        && !modifiers.ctrl
+        && raw_syms.contains(&Keysym::_5)
+    {
+        return Some(Some(Action::MoveToWorkspace(4)));
+    }
+    if modifiers.logo
+        && modifiers.shift
+        && !modifiers.alt
+        && !modifiers.ctrl
+        && raw_syms.contains(&Keysym::_6)
+    {
+        return Some(Some(Action::MoveToWorkspace(5)));
+    }
+    if modifiers.logo
+        && modifiers.shift
+        && !modifiers.alt
+        && !modifiers.ctrl
+        && raw_syms.contains(&Keysym::_7)
+    {
+        return Some(Some(Action::MoveToWorkspace(6)));
+    }
+    if modifiers.logo
+        && modifiers.shift
+        && !modifiers.alt
+        && !modifiers.ctrl
+        && raw_syms.contains(&Keysym::_8)
+    {
+        return Some(Some(Action::MoveToWorkspace(7)));
+    }
+    if modifiers.logo
+        && modifiers.shift
+        && !modifiers.alt
+        && !modifiers.ctrl
+        && raw_syms.contains(&Keysym::_9)
+    {
+        return Some(Some(Action::MoveToWorkspace(8)));
+    }
+    None
 }
 
 impl Buddaraysh<WinitData> {
@@ -179,8 +302,9 @@ impl Buddaraysh<WinitData> {
                     time,
                     |data, modifiers, handle| {
                         let keysym = handle.modified_sym();
+                        let raw_syms = handle.raw_syms();
 
-                        data.input_to_action(modifiers, keysym, event.state())
+                        data.input_to_action(modifiers, keysym, raw_syms, event.state())
                             .map_or(FilterResult::Forward, |action| {
                                 FilterResult::Intercept(action)
                             })
@@ -354,6 +478,7 @@ impl Buddaraysh<UdevData> {
                     time,
                     |data, modifiers, handle| {
                         let keysym = handle.modified_sym();
+                        let raw_syms = handle.raw_syms();
 
                         if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12)
                             .contains(&keysym.raw())
@@ -368,7 +493,7 @@ impl Buddaraysh<UdevData> {
                             return FilterResult::Intercept(Action::None);
                         }
 
-                        data.input_to_action(modifiers, keysym, event.state())
+                        data.input_to_action(modifiers, keysym, raw_syms, event.state())
                             .map_or(FilterResult::Forward, |action| {
                                 FilterResult::Intercept(action)
                             })
