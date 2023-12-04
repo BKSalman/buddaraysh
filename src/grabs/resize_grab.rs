@@ -1,4 +1,4 @@
-use crate::{focus::FocusTarget, window::WindowElement, Backend, Buddaraysh, BTN_LEFT};
+use crate::{focus::FocusTarget, window::WindowElement, Backend, Buddaraysh, BTN_LEFT, BTN_RIGHT};
 use smithay::{
     desktop::{space::SpaceElement, Space},
     input::pointer::{
@@ -154,7 +154,9 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
     ) {
         handle.button(data, event);
 
-        if !handle.current_pressed().contains(&BTN_LEFT) {
+        if !handle.current_pressed().contains(&BTN_LEFT)
+            && !handle.current_pressed().contains(&BTN_RIGHT)
+        {
             // No more buttons are pressed, release the grab.
             handle.unset_grab(data, event.serial, event.time, true);
             match &self.window {

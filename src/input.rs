@@ -12,7 +12,7 @@ use smithay::{
     desktop::{layer_map_for_output, space::SpaceElement, WindowSurfaceType},
     input::{
         keyboard::{keysyms as xkb, FilterResult, Keysym, ModifiersState},
-        pointer::{AxisFrame, ButtonEvent, MotionEvent, RelativeMotionEvent},
+        pointer::{AxisFrame, ButtonEvent, GrabStartData, MotionEvent, RelativeMotionEvent},
     },
     reexports::{
         input::Led, wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge,
@@ -20,12 +20,11 @@ use smithay::{
     },
     utils::{Logical, Point, Serial, SERIAL_COUNTER},
     wayland::{
-        compositor,
         input_method::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
         pointer_constraints::{with_pointer_constraint, PointerConstraint},
         seat::WaylandFocus,
-        shell::{wlr_layer::Layer as WlrLayer, xdg::XdgToplevelSurfaceData},
+        shell::wlr_layer::Layer as WlrLayer,
     },
 };
 use tracing::{error, info};
@@ -39,34 +38,34 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
     fn input_to_action(
         &mut self,
         modifiers: &ModifiersState,
-        keysym: Keysym,
+        _keysym: Keysym,
         raw_syms: &[Keysym],
         state: KeyState,
     ) -> Option<Action> {
         if state == KeyState::Pressed && !self.seat.keyboard_shortcuts_inhibited() {
-            if let Some(value) = move_to_workspace(modifiers, keysym, raw_syms) {
+            if let Some(value) = move_to_workspace(modifiers, raw_syms) {
                 return value;
             }
 
-            if let Some(value) = switch_workspace(modifiers, keysym) {
+            if let Some(value) = switch_workspace(modifiers, raw_syms) {
                 return value;
             }
 
-            if modifiers.logo && keysym == Keysym::c {
+            if modifiers.logo && raw_syms.contains(&Keysym::c) {
                 return Some(Action::Close);
             }
 
-            if modifiers.logo && keysym == Keysym::q {
+            if modifiers.logo && raw_syms.contains(&Keysym::q) {
                 return Some(Action::Spawn(String::from("kitty")));
             }
 
-            if modifiers.logo && keysym == Keysym::d {
+            if modifiers.logo && raw_syms.contains(&Keysym::d) {
                 return Some(Action::Spawn(String::from(
                     "pkill rofi || ~/.config/rofi/launcher.sh",
                 )));
             }
 
-            if modifiers.logo && modifiers.shift && keysym == Keysym::X {
+            if modifiers.logo && modifiers.shift && raw_syms.contains(&Keysym::x) {
                 return Some(Action::Quit);
             }
         }
@@ -137,6 +136,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                         time,
                     },
                 );
+                pointer.frame(self);
             }
             Action::MoveToWorkspace(workspace_index) => {
                 if self.workspaces.current_workspace_index() == workspace_index {
@@ -174,42 +174,38 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
     }
 }
 
-fn switch_workspace(modifiers: &ModifiersState, keysym: Keysym) -> Option<Option<Action>> {
-    if modifiers.logo && keysym == Keysym::_1 {
+fn switch_workspace(modifiers: &ModifiersState, raw_syms: &[Keysym]) -> Option<Option<Action>> {
+    if modifiers.logo && raw_syms.contains(&Keysym::_1) {
         return Some(Some(Action::SwitchToWorkspace(0)));
     }
-    if modifiers.logo && keysym == Keysym::_2 {
+    if modifiers.logo && raw_syms.contains(&Keysym::_2) {
         return Some(Some(Action::SwitchToWorkspace(1)));
     }
-    if modifiers.logo && keysym == Keysym::_3 {
+    if modifiers.logo && raw_syms.contains(&Keysym::_3) {
         return Some(Some(Action::SwitchToWorkspace(2)));
     }
-    if modifiers.logo && keysym == Keysym::_4 {
+    if modifiers.logo && raw_syms.contains(&Keysym::_4) {
         return Some(Some(Action::SwitchToWorkspace(3)));
     }
-    if modifiers.logo && keysym == Keysym::_5 {
+    if modifiers.logo && raw_syms.contains(&Keysym::_5) {
         return Some(Some(Action::SwitchToWorkspace(4)));
     }
-    if modifiers.logo && keysym == Keysym::_6 {
+    if modifiers.logo && raw_syms.contains(&Keysym::_6) {
         return Some(Some(Action::SwitchToWorkspace(5)));
     }
-    if modifiers.logo && keysym == Keysym::_7 {
+    if modifiers.logo && raw_syms.contains(&Keysym::_7) {
         return Some(Some(Action::SwitchToWorkspace(6)));
     }
-    if modifiers.logo && keysym == Keysym::_8 {
+    if modifiers.logo && raw_syms.contains(&Keysym::_8) {
         return Some(Some(Action::SwitchToWorkspace(7)));
     }
-    if modifiers.logo && keysym == Keysym::_9 {
+    if modifiers.logo && raw_syms.contains(&Keysym::_9) {
         return Some(Some(Action::SwitchToWorkspace(8)));
     }
     None
 }
 
-fn move_to_workspace(
-    modifiers: &ModifiersState,
-    keysym: Keysym,
-    raw_syms: &[Keysym],
-) -> Option<Option<Action>> {
+fn move_to_workspace(modifiers: &ModifiersState, raw_syms: &[Keysym]) -> Option<Option<Action>> {
     if modifiers.logo
         && modifiers.shift
         && !modifiers.alt
@@ -501,7 +497,32 @@ impl Buddaraysh<UdevData> {
                 );
 
                 if let Some(action) = action {
-                    self.process_common_actions(action);
+                    match action {
+                        Action::SwitchToWorkspace(workspace_index) => {
+                            if let None = self.workspaces.set_current_workspace(workspace_index) {
+                                error!("workspace index does not exist");
+                            }
+                            let pointer = self.pointer.clone();
+                            let now = Instant::now();
+                            let time = now.duration_since(self.start_time).as_millis() as u32;
+                            // this is to fix the button press being sent to the fullscreen
+                            // surface when switching to another workspace
+                            //
+                            // but doesn't fix when switching back to the workspace with the
+                            // fullscreen surface
+                            pointer.motion(
+                                self,
+                                None,
+                                &MotionEvent {
+                                    location: pointer.current_location(),
+                                    serial: SERIAL_COUNTER.next_serial(),
+                                    time,
+                                },
+                            );
+                            pointer.frame(self);
+                        }
+                        action => self.process_common_actions(action),
+                    }
                 }
             }
             InputEvent::PointerMotion { event, .. } => {
@@ -692,19 +713,38 @@ impl Buddaraysh<UdevData> {
                                 self.surface_under(pointer.current_location())
                             {
                                 match window {
-                                    WindowElement::Wayland(w) => {
+                                    WindowElement::Wayland(ref w) => {
                                         let seat = self.seat.clone();
                                         let toplevel = w.toplevel().clone();
-                                        self.loop_handle.insert_idle(move |data| {
-                                            data.state.move_request_xdg(&toplevel, &seat, serial)
-                                        });
+                                        let focus = self
+                                            .workspaces
+                                            .current_workspace()
+                                            .window_location(&window)
+                                            .map(|l| (FocusTarget::Window(window), l));
+                                        let start_data = smithay::input::pointer::GrabStartData {
+                                            focus,
+                                            button,
+                                            location: pointer.current_location(),
+                                        };
+
+                                        self.move_request_xdg(&toplevel, &seat, serial, start_data);
                                     }
                                     #[cfg(feature = "xwayland")]
-                                    WindowElement::X11(w) => {
-                                        let window = w.clone();
-                                        self.loop_handle.insert_idle(move |data| {
-                                            data.state.move_request_x11(&window)
-                                        });
+                                    WindowElement::X11(ref w) => {
+                                        let w = w.clone();
+                                        let focus = self
+                                            .workspaces
+                                            .current_workspace()
+                                            .window_location(&window)
+                                            .map(|l| (FocusTarget::Window(window), l));
+
+                                        let start_data = smithay::input::pointer::GrabStartData {
+                                            focus,
+                                            button,
+                                            location: pointer.current_location(),
+                                        };
+
+                                        self.move_request_x11(&w, start_data);
                                     }
                                 }
                             }
@@ -723,14 +763,12 @@ impl Buddaraysh<UdevData> {
                                         let seat = self.seat.clone();
                                         let toplevel = w.toplevel().clone();
                                         let pointer_location = pointer.current_location();
-                                        info!("pointer locatin: {pointer_location:#?}");
                                         let window_location = self
                                             .workspaces
                                             .current_workspace()
                                             .window_location(&window)
                                             .unwrap();
                                         let geometry = window.geometry();
-                                        info!("geometry: {geometry:#?}");
                                         let diff = pointer_location - window_location.to_f64();
                                         let half_width = (geometry.size.w / 2) as f64;
                                         let half_height = (geometry.size.h / 2) as f64;
@@ -745,17 +783,23 @@ impl Buddaraysh<UdevData> {
                                         } else {
                                             ResizeEdge::None
                                         };
-                                        self.loop_handle.insert_idle(move |data| {
-                                            data.state
-                                                .resize_request_xdg(toplevel, seat, serial, edge)
-                                        });
+
+                                        let start_data = GrabStartData {
+                                            focus: None,
+                                            button,
+                                            location: pointer.current_location(),
+                                        };
+
+                                        self.resize_request_xdg(
+                                            toplevel, seat, serial, edge, start_data,
+                                        );
                                     }
                                     #[cfg(feature = "xwayland")]
                                     WindowElement::X11(w) => {
                                         let window = w.clone();
                                         self.loop_handle.insert_idle(move |data| {
-                                            // TODO use resize_request_x11()
-                                            // data.state.move_request_x11(&window)
+                                            // TODO: get resize edge
+                                            // data.state.resize_request_x11(&window)
                                         });
                                     }
                                 }

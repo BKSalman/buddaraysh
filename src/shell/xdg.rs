@@ -4,6 +4,7 @@ use smithay::{
     delegate_xdg_activation, delegate_xdg_shell,
     desktop::{space::SpaceElement, PopupKind, PopupManager, Space, Window},
     input::{
+        keyboard::GrabStartData,
         pointer::{Focus, GrabStartData as PointerGrabStartData},
         Seat,
     },
@@ -76,7 +77,9 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
 
     fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
         let seat: Seat<Buddaraysh<BackendData>> = Seat::from_resource(&seat).unwrap();
-        self.move_request_xdg(&surface, &seat, serial)
+        if let Some(start_data) = check_grab(&seat, surface.wl_surface(), serial) {
+            self.move_request_xdg(&surface, &seat, serial, start_data);
+        }
     }
 
     fn resize_request(
@@ -87,8 +90,11 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
         edges: xdg_toplevel::ResizeEdge,
     ) {
         let seat = Seat::from_resource(&seat).unwrap();
+        let wl_surface = surface.wl_surface();
 
-        self.resize_request_xdg(surface, seat, serial, edges);
+        if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
+            self.resize_request_xdg(surface, seat, serial, edges, start_data);
+        }
     }
 
     fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
@@ -274,16 +280,10 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         surface: &ToplevelSurface,
         seat: &Seat<Self>,
         serial: Serial,
+        start_data: smithay::input::pointer::GrabStartData<Buddaraysh<BackendData>>,
     ) {
         // TODO: touch move.
         let pointer = seat.get_pointer().unwrap();
-
-        // Check that this surface has a click grab.
-        if !pointer.has_grab(serial) {
-            return;
-        }
-
-        let start_data = pointer.grab_start_data().unwrap();
 
         // If the client disconnects after requesting a move
         // we can just ignore the request
@@ -300,6 +300,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 .0
                 .same_client_as(&surface.wl_surface().id())
         {
+            tracing::info!("not the same");
             return;
         }
 
@@ -352,65 +353,64 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         seat: Seat<Buddaraysh<BackendData>>,
         serial: Serial,
         edges: xdg_toplevel::ResizeEdge,
+        start_data: smithay::input::pointer::GrabStartData<Buddaraysh<BackendData>>,
     ) {
         let wl_surface = surface.wl_surface();
 
-        if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
-            let pointer = seat.get_pointer().unwrap();
+        let pointer = seat.get_pointer().unwrap();
 
-            let window = self
-                .workspaces
-                .current_workspace()
-                .windows()
-                .find(|window| {
-                    window
-                        .wl_surface()
-                        .map(|s| s == *wl_surface)
-                        .unwrap_or(false)
-                })
-                .unwrap()
-                .clone();
-            let initial_window_location = self
-                .workspaces
-                .current_workspace()
-                .window_location(&window)
+        let window = self
+            .workspaces
+            .current_workspace()
+            .windows()
+            .find(|window| {
+                window
+                    .wl_surface()
+                    .map(|s| s == *wl_surface)
+                    .unwrap_or(false)
+            })
+            .unwrap()
+            .clone();
+        let initial_window_location = self
+            .workspaces
+            .current_workspace()
+            .window_location(&window)
+            .unwrap();
+        let initial_window_size = window.geometry().size;
+
+        surface.with_pending_state(|state| {
+            state.states.set(xdg_toplevel::State::Resizing);
+        });
+
+        surface.send_pending_configure();
+
+        let initial_rect =
+            Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
+
+        compositor::with_states(surface.wl_surface(), |states| {
+            states
+                .data_map
+                .insert_if_missing(RefCell::<ResizeSurfaceState>::default);
+            let state = states
+                .data_map
+                .get::<RefCell<ResizeSurfaceState>>()
                 .unwrap();
-            let initial_window_size = window.geometry().size;
 
-            surface.with_pending_state(|state| {
-                state.states.set(xdg_toplevel::State::Resizing);
-            });
-
-            surface.send_pending_configure();
-
-            let initial_rect =
-                Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
-
-            compositor::with_states(surface.wl_surface(), |states| {
-                states
-                    .data_map
-                    .insert_if_missing(RefCell::<ResizeSurfaceState>::default);
-                let state = states
-                    .data_map
-                    .get::<RefCell<ResizeSurfaceState>>()
-                    .unwrap();
-
-                *state.borrow_mut() = ResizeSurfaceState::Resizing {
-                    edges: edges.into(),
-                    initial_rect,
-                };
-            });
-
-            let grab = ResizeSurfaceGrab {
-                start_data,
-                window,
+            *state.borrow_mut() = ResizeSurfaceState::Resizing {
                 edges: edges.into(),
                 initial_rect,
-                last_window_size: initial_rect.size,
             };
+        });
 
-            pointer.set_grab(self, grab, serial, Focus::Clear);
-        }
+        let grab = ResizeSurfaceGrab {
+            start_data,
+            window,
+            edges: edges.into(),
+            initial_rect,
+            last_window_size: initial_rect.size,
+        };
+
+        pointer.set_grab(self, grab, serial, Focus::Clear);
     }
 }
 

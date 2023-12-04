@@ -259,60 +259,13 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         _button: u32,
         edges: X11ResizeEdge,
     ) {
-        let start_data = self.state.pointer.grab_start_data().unwrap();
-        let pointer = self.state.pointer.clone();
-        let serial = SERIAL_COUNTER.next_serial();
-
-        let Some(window) = self
-            .state
-            .workspaces
-            .current_workspace()
-            .windows()
-            .find(|e| matches!(e, WindowElement::X11(w) if w == &x11_surface))
-        else {
-            return;
-        };
-
-        let geometry = window.geometry();
-        let loc = self
-            .state
-            .workspaces
-            .current_workspace()
-            .window_location(window)
-            .unwrap();
-        let (initial_window_location, initial_window_size) = (loc, geometry.size);
-
-        let initial_rect =
-            Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
-
-        compositor::with_states(&window.wl_surface().unwrap(), |states| {
-            states
-                .data_map
-                .insert_if_missing(RefCell::<ResizeSurfaceState>::default);
-            let state = states
-                .data_map
-                .get::<RefCell<ResizeSurfaceState>>()
-                .unwrap();
-
-            *state.borrow_mut() = ResizeSurfaceState::Resizing {
-                edges: edges.into(),
-                initial_rect,
-            };
-        });
-
-        let grab = ResizeSurfaceGrab {
-            start_data,
-            window: window.clone(),
-            edges: edges.into(),
-            initial_rect,
-            last_window_size: initial_rect.size,
-        };
-
-        pointer.set_grab(&mut self.state, grab, serial, Focus::Clear);
+        self.state.resize_request_x11(edges, x11_surface);
     }
 
     fn move_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32) {
-        self.state.move_request_x11(&window);
+        if let Some(start_data) = self.state.pointer.grab_start_data() {
+            self.state.move_request_x11(&window, start_data);
+        }
     }
 
     fn allow_selection_access(&mut self, xwm: XwmId, _selection: SelectionTarget) -> bool {
@@ -390,6 +343,59 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     }
 }
 
+impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
+    pub fn resize_request_x11(&mut self, edges: X11ResizeEdge, x11_surface: X11Surface) {
+        let start_data = self.pointer.grab_start_data().unwrap();
+        let pointer = self.pointer.clone();
+        let serial = SERIAL_COUNTER.next_serial();
+
+        let Some(window) = self
+            .workspaces
+            .current_workspace()
+            .windows()
+            .find(|e| matches!(e, WindowElement::X11(w) if w == &x11_surface))
+        else {
+            return;
+        };
+
+        let geometry = window.geometry();
+        let loc = self
+            .workspaces
+            .current_workspace()
+            .window_location(window)
+            .unwrap();
+        let (initial_window_location, initial_window_size) = (loc, geometry.size);
+
+        let initial_rect =
+            Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
+
+        compositor::with_states(&window.wl_surface().unwrap(), |states| {
+            states
+                .data_map
+                .insert_if_missing(RefCell::<ResizeSurfaceState>::default);
+            let state = states
+                .data_map
+                .get::<RefCell<ResizeSurfaceState>>()
+                .unwrap();
+
+            *state.borrow_mut() = ResizeSurfaceState::Resizing {
+                edges: edges.into(),
+                initial_rect,
+            };
+        });
+
+        let grab = ResizeSurfaceGrab {
+            start_data,
+            window: window.clone(),
+            edges: edges.into(),
+            initial_rect,
+            last_window_size: initial_rect.size,
+        };
+
+        pointer.set_grab(self, grab, serial, Focus::Clear);
+    }
+}
+
 impl<BackendData: Backend> Buddaraysh<BackendData> {
     pub fn maximize_request_x11(&mut self, window: &X11Surface) {
         let Some(elem) = self
@@ -436,11 +442,11 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
             .map_window(elem, geometry.loc, false);
     }
 
-    pub fn move_request_x11(&mut self, window: &X11Surface) {
-        let Some(start_data) = self.pointer.grab_start_data() else {
-            return;
-        };
-
+    pub fn move_request_x11(
+        &mut self,
+        window: &X11Surface,
+        start_data: smithay::input::pointer::GrabStartData<Buddaraysh<BackendData>>,
+    ) {
         let Some(element) = self
             .workspaces
             .current_workspace()

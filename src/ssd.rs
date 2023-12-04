@@ -87,16 +87,22 @@ impl HeaderBar {
                     WindowElement::Wayland(w) => {
                         let seat = seat.clone();
                         let toplevel = w.toplevel().clone();
+                        let pointer = seat.get_pointer().unwrap();
                         state.loop_handle.insert_idle(move |data| {
-                            data.state.move_request_xdg(&toplevel, &seat, serial)
+                            if let Some(start_data) = pointer.grab_start_data() {
+                                data.state
+                                    .move_request_xdg(&toplevel, &seat, serial, start_data);
+                            }
                         });
                     }
                     #[cfg(feature = "xwayland")]
                     WindowElement::X11(w) => {
                         let window = w.clone();
-                        state
-                            .loop_handle
-                            .insert_idle(move |data| data.state.move_request_x11(&window));
+                        state.loop_handle.insert_idle(move |data| {
+                            if let Some(start_data) = data.state.pointer.grab_start_data() {
+                                data.state.move_request_x11(&window, start_data);
+                            }
+                        });
                     }
                 };
             }
