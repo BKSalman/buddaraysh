@@ -20,7 +20,7 @@ impl<BackendData: Backend + 'static> WlrLayerShellHandler for Buddaraysh<Backend
         &mut self,
         surface: LayerSurface,
         wl_output: Option<WlOutput>,
-        _layer: WlrLayer,
+        layer: WlrLayer,
         namespace: String,
     ) {
         let output = wl_output
@@ -34,12 +34,17 @@ impl<BackendData: Backend + 'static> WlrLayerShellHandler for Buddaraysh<Backend
             map.map_layer(&layer_surface).unwrap();
         }
 
-        if let Some(keyboard) = self.seat.get_keyboard() {
-            keyboard.set_focus(
-                self,
-                Some(layer_surface.clone().into()),
-                SERIAL_COUNTER.next_serial(),
-            );
+        match layer {
+            WlrLayer::Top | WlrLayer::Overlay => {
+                if let Some(keyboard) = self.seat.get_keyboard() {
+                    keyboard.set_focus(
+                        self,
+                        Some(layer_surface.clone().into()),
+                        SERIAL_COUNTER.next_serial(),
+                    );
+                }
+            }
+            _ => {}
         }
     }
 
