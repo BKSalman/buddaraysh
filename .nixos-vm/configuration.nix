@@ -63,6 +63,7 @@
     xorg.xcalc
     jq
     vim
+    chatterino2
   ];
 
   programs.git.enable = true;

@@ -4,7 +4,6 @@ use smithay::{
     delegate_xdg_activation, delegate_xdg_shell,
     desktop::{space::SpaceElement, PopupKind, PopupManager, Space, Window},
     input::{
-        keyboard::GrabStartData,
         pointer::{Focus, GrabStartData as PointerGrabStartData},
         Seat,
     },
@@ -300,7 +299,6 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 .0
                 .same_client_as(&surface.wl_surface().id())
         {
-            tracing::info!("not the same");
             return;
         }
 

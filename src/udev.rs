@@ -116,7 +116,6 @@ use crate::{
     render::{output_elements, CustomRenderElements},
     systemd,
     window::WindowElement,
-    workspace::Workspace,
     Backend, Buddaraysh, CalloopData,
 };
 
@@ -1846,6 +1845,8 @@ fn render_surface<'a, 'b, 'c>(
             }
             // Mark screencopy frame as successful.
             screencopy.submit();
+        } else {
+            screencopy.failed();
         }
     }
 

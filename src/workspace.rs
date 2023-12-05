@@ -93,7 +93,7 @@ impl Workspaces {
     }
 }
 
-#[derive(Default, PartialEq, Debug)]
+#[derive(Default, Debug)]
 pub struct Workspace {
     space: Space<WindowElement>,
 }

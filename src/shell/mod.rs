@@ -7,7 +7,7 @@ use smithay::{
     utils::{Logical, Point, Rectangle},
 };
 
-use crate::{window::WindowElement, workspace::Workspace};
+use crate::window::WindowElement;
 
 mod x11;
 pub mod xdg;

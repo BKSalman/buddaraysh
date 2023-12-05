@@ -13,7 +13,6 @@ use crate::{
     drawing::{PointerRenderElement, CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN},
     shell::FullscreenSurface,
     window::{WindowElement, WindowRenderElement},
-    workspace::Workspace,
 };
 
 smithay::backend::renderer::element::render_elements! {

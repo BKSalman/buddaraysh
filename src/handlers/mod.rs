@@ -14,7 +14,7 @@ use smithay::wayland::selection::data_device::{
     set_data_device_focus, ClientDndGrabHandler, ServerDndGrabHandler,
 };
 
-use smithay::{delegate_data_device, delegate_output, delegate_seat};
+use smithay::{delegate_data_device, delegate_output, delegate_seat, delegate_tablet_manager};
 
 impl<BackendData: Backend + 'static> SeatHandler for Buddaraysh<BackendData> {
     type KeyboardFocus = FocusTarget;
@@ -42,6 +42,8 @@ impl<BackendData: Backend + 'static> SeatHandler for Buddaraysh<BackendData> {
 }
 
 delegate_seat!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
+
+delegate_tablet_manager!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 
 impl<BackendData: Backend + 'static> ClientDndGrabHandler for Buddaraysh<BackendData> {
     fn started(

@@ -3,8 +3,11 @@ use std::{process::Stdio, sync::atomic::Ordering, time::Instant};
 use smithay::{
     backend::{
         input::{
-            AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
-            KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
+            AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, GestureBeginEvent as _,
+            GestureEndEvent, GesturePinchUpdateEvent as _, GestureSwipeUpdateEvent as _,
+            InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent,
+            PointerButtonEvent, PointerMotionEvent, ProximityState, TabletToolButtonEvent,
+            TabletToolEvent, TabletToolProximityEvent,
         },
         libinput::LibinputInputBackend,
         session::Session,
@@ -12,10 +15,15 @@ use smithay::{
     desktop::{layer_map_for_output, space::SpaceElement, WindowSurfaceType},
     input::{
         keyboard::{keysyms as xkb, FilterResult, Keysym, ModifiersState},
-        pointer::{AxisFrame, ButtonEvent, GrabStartData, MotionEvent, RelativeMotionEvent},
+        pointer::{
+            AxisFrame, ButtonEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
+            GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
+            GestureSwipeUpdateEvent, GrabStartData, MotionEvent, RelativeMotionEvent,
+        },
     },
     reexports::{
-        input::Led, wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge,
+        input::{event::tablet_tool::TipState, DeviceCapability, Led},
+        wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge,
         wayland_server::DisplayHandle,
     },
     utils::{Logical, Point, Serial, SERIAL_COUNTER},
@@ -25,6 +33,7 @@ use smithay::{
         pointer_constraints::{with_pointer_constraint, PointerConstraint},
         seat::WaylandFocus,
         shell::wlr_layer::Layer as WlrLayer,
+        tablet_manager::{TabletDescriptor, TabletSeatTrait},
     },
 };
 use tracing::{error, info};
@@ -51,22 +60,70 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 return value;
             }
 
-            if modifiers.logo && raw_syms.contains(&Keysym::c) {
+            if modifiers.logo
+                && !modifiers.alt
+                && !modifiers.shift
+                && !modifiers.ctrl
+                && raw_syms.contains(&Keysym::c)
+            {
                 return Some(Action::Close);
             }
 
-            if modifiers.logo && raw_syms.contains(&Keysym::q) {
+            if modifiers.logo
+                && !modifiers.alt
+                && !modifiers.shift
+                && !modifiers.ctrl
+                && raw_syms.contains(&Keysym::q)
+            {
                 return Some(Action::Spawn(String::from("kitty")));
             }
 
-            if modifiers.logo && raw_syms.contains(&Keysym::d) {
+            if modifiers.logo
+                && !modifiers.alt
+                && !modifiers.shift
+                && !modifiers.ctrl
+                && raw_syms.contains(&Keysym::d)
+            {
                 return Some(Action::Spawn(String::from(
                     "pkill rofi || ~/.config/rofi/launcher.sh",
                 )));
             }
 
-            if modifiers.logo && modifiers.shift && raw_syms.contains(&Keysym::x) {
+            if modifiers.logo
+                && !modifiers.alt
+                && !modifiers.ctrl
+                && modifiers.shift
+                && raw_syms.contains(&Keysym::x)
+            {
                 return Some(Action::Quit);
+            }
+
+            if modifiers.logo
+                && !modifiers.alt
+                && !modifiers.shift
+                && modifiers.ctrl
+                && raw_syms.contains(&Keysym::v)
+            {
+                return Some(Action::Spawn(String::from(
+                    "pkill rofi || rofi -theme $HOME/.config/rofi/clipboard_theme -modi clipboard:~/.local/bin/cliphist-rofi -show clipboard",
+                )));
+            }
+
+            if modifiers.logo
+                && !modifiers.alt
+                && !modifiers.shift
+                && !modifiers.ctrl
+                && raw_syms.contains(&Keysym::period)
+            {
+                return Some(Action::Spawn(String::from(
+                    "pkill rofi || rofi -theme $HOME/.config/rofi/clipboard_theme -modi emoji -show emoji",
+                )));
+            }
+
+            if raw_syms.contains(&Keysym::Print) {
+                return Some(Action::Spawn(String::from(
+                    "grimblast --freeze copysave area ~/Pictures/$(date +%Y-%m-%d_%H-%m-%s).png",
+                )));
             }
         }
 
@@ -94,7 +151,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                     .spawn()
                 {
                     Ok(_child) => {
-                        // TODO: keep track of children processes
+                        // TODO: keep track of child processes
                     }
                     Err(e) => error!("Failed to run command: {e}"),
                 }
@@ -116,7 +173,12 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 }
             }
             Action::SwitchToWorkspace(workspace_index) => {
-                if let None = self.workspaces.set_current_workspace(workspace_index) {
+                info!("switching to {workspace_index}");
+                if self
+                    .workspaces
+                    .set_current_workspace(workspace_index)
+                    .is_none()
+                {
                     error!("workspace index does not exist");
                 }
                 let pointer = self.pointer.clone();
@@ -137,6 +199,12 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                     },
                 );
                 pointer.frame(self);
+
+                let target = self.surface_under(pointer.current_location());
+                let keyboard = self.seat.get_keyboard().unwrap();
+                let serial = SERIAL_COUNTER.next_serial();
+                info!("target: {target:#?}");
+                keyboard.set_focus(self, target.map(|(f, _)| f), serial);
             }
             Action::MoveToWorkspace(workspace_index) => {
                 if self.workspaces.current_workspace_index() == workspace_index {
@@ -457,6 +525,7 @@ impl Buddaraysh<UdevData> {
                 let modifiers = keyboard.modifier_state();
 
                 let mut leds = Led::empty();
+
                 if modifiers.num_lock {
                     leds |= Led::NUMLOCK;
                 }
@@ -497,32 +566,7 @@ impl Buddaraysh<UdevData> {
                 );
 
                 if let Some(action) = action {
-                    match action {
-                        Action::SwitchToWorkspace(workspace_index) => {
-                            if let None = self.workspaces.set_current_workspace(workspace_index) {
-                                error!("workspace index does not exist");
-                            }
-                            let pointer = self.pointer.clone();
-                            let now = Instant::now();
-                            let time = now.duration_since(self.start_time).as_millis() as u32;
-                            // this is to fix the button press being sent to the fullscreen
-                            // surface when switching to another workspace
-                            //
-                            // but doesn't fix when switching back to the workspace with the
-                            // fullscreen surface
-                            pointer.motion(
-                                self,
-                                None,
-                                &MotionEvent {
-                                    location: pointer.current_location(),
-                                    serial: SERIAL_COUNTER.next_serial(),
-                                    time,
-                                },
-                            );
-                            pointer.frame(self);
-                        }
-                        action => self.process_common_actions(action),
-                    }
+                    self.process_common_actions(action);
                 }
             }
             InputEvent::PointerMotion { event, .. } => {
@@ -857,6 +901,237 @@ impl Buddaraysh<UdevData> {
                 let pointer = self.seat.get_pointer().unwrap();
                 pointer.axis(self, frame);
                 pointer.frame(self);
+            }
+            InputEvent::GestureSwipeBegin { event } => {
+                let serial = SERIAL_COUNTER.next_serial();
+                let pointer = self.pointer.clone();
+                pointer.gesture_swipe_begin(
+                    self,
+                    &GestureSwipeBeginEvent {
+                        serial,
+                        time: event.time_msec(),
+                        fingers: event.fingers(),
+                    },
+                );
+            }
+            InputEvent::GestureSwipeUpdate { event } => {
+                let pointer = self.pointer.clone();
+                pointer.gesture_swipe_update(
+                    self,
+                    &GestureSwipeUpdateEvent {
+                        time: event.time_msec(),
+                        delta: event.delta(),
+                    },
+                );
+            }
+            InputEvent::GestureSwipeEnd { event } => {
+                let serial = SERIAL_COUNTER.next_serial();
+                let pointer = self.pointer.clone();
+                pointer.gesture_swipe_end(
+                    self,
+                    &GestureSwipeEndEvent {
+                        serial,
+                        time: event.time_msec(),
+                        cancelled: event.cancelled(),
+                    },
+                );
+            }
+            InputEvent::GesturePinchBegin { event } => {
+                let serial = SERIAL_COUNTER.next_serial();
+                let pointer = self.pointer.clone();
+                pointer.gesture_pinch_begin(
+                    self,
+                    &GesturePinchBeginEvent {
+                        serial,
+                        time: event.time_msec(),
+                        fingers: event.fingers(),
+                    },
+                );
+            }
+            InputEvent::GesturePinchUpdate { event } => {
+                let pointer = self.pointer.clone();
+                pointer.gesture_pinch_update(
+                    self,
+                    &GesturePinchUpdateEvent {
+                        time: event.time_msec(),
+                        delta: event.delta(),
+                        scale: event.scale(),
+                        rotation: event.rotation(),
+                    },
+                );
+            }
+            InputEvent::GesturePinchEnd { event } => {
+                let serial = SERIAL_COUNTER.next_serial();
+                let pointer = self.pointer.clone();
+                pointer.gesture_pinch_end(
+                    self,
+                    &GesturePinchEndEvent {
+                        serial,
+                        time: event.time_msec(),
+                        cancelled: event.cancelled(),
+                    },
+                );
+            }
+            InputEvent::TabletToolAxis { event } => {
+                let tablet_seat = self.seat.tablet_seat();
+
+                let output_geometry = self.workspaces.outputs().next().map(|o| {
+                    self.workspaces
+                        .current_workspace()
+                        .output_geometry(o)
+                        .unwrap()
+                });
+
+                if let Some(rect) = output_geometry {
+                    let pointer_location =
+                        event.position_transformed(rect.size) + rect.loc.to_f64();
+
+                    let pointer = self.pointer.clone();
+                    let under = self.surface_under(pointer_location);
+                    let tablet = tablet_seat.get_tablet(&TabletDescriptor::from(&event.device()));
+                    let tool = tablet_seat.get_tool(&event.tool());
+
+                    pointer.motion(
+                        self,
+                        under.clone(),
+                        &MotionEvent {
+                            location: pointer_location,
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time: 0,
+                        },
+                    );
+
+                    if let (Some(tablet), Some(tool)) = (tablet, tool) {
+                        if event.pressure_has_changed() {
+                            tool.pressure(event.pressure());
+                        }
+                        if event.distance_has_changed() {
+                            tool.distance(event.distance());
+                        }
+                        if event.tilt_has_changed() {
+                            tool.tilt(event.tilt());
+                        }
+                        if event.slider_has_changed() {
+                            tool.slider_position(event.slider_position());
+                        }
+                        if event.rotation_has_changed() {
+                            tool.rotation(event.rotation());
+                        }
+                        if event.wheel_has_changed() {
+                            tool.wheel(event.wheel_delta(), event.wheel_delta_discrete());
+                        }
+
+                        tool.motion(
+                            pointer_location,
+                            under.and_then(|(f, loc)| f.wl_surface().map(|s| (s, loc))),
+                            &tablet,
+                            SERIAL_COUNTER.next_serial(),
+                            event.time_msec(),
+                        );
+                    }
+
+                    pointer.frame(self);
+                }
+            }
+            InputEvent::TabletToolProximity { event } => {
+                let tablet_seat = self.seat.tablet_seat();
+
+                let output_geometry = self.workspaces.outputs().next().map(|o| {
+                    self.workspaces
+                        .current_workspace()
+                        .output_geometry(o)
+                        .unwrap()
+                });
+
+                if let Some(rect) = output_geometry {
+                    let tool = event.tool();
+                    tablet_seat.add_tool::<Self>(&self.display_handle, &tool);
+
+                    let pointer_location =
+                        event.position_transformed(rect.size) + rect.loc.to_f64();
+
+                    let pointer = self.pointer.clone();
+                    let under = self.surface_under(pointer_location);
+                    let tablet = tablet_seat.get_tablet(&TabletDescriptor::from(&event.device()));
+                    let tool = tablet_seat.get_tool(&tool);
+
+                    pointer.motion(
+                        self,
+                        under.clone(),
+                        &MotionEvent {
+                            location: pointer_location,
+                            serial: SERIAL_COUNTER.next_serial(),
+                            time: 0,
+                        },
+                    );
+                    pointer.frame(self);
+
+                    if let (Some(under), Some(tablet), Some(tool)) = (
+                        under.and_then(|(f, loc)| f.wl_surface().map(|s| (s, loc))),
+                        tablet,
+                        tool,
+                    ) {
+                        match event.state() {
+                            ProximityState::In => tool.proximity_in(
+                                pointer_location,
+                                under,
+                                &tablet,
+                                SERIAL_COUNTER.next_serial(),
+                                event.time_msec(),
+                            ),
+                            ProximityState::Out => tool.proximity_out(event.time_msec()),
+                        }
+                    }
+                }
+            }
+            InputEvent::TabletToolTip { event } => {
+                let tool = self.seat.tablet_seat().get_tool(&event.tool());
+
+                if let Some(tool) = tool {
+                    match event.tip_state() {
+                        TipState::Down => {
+                            let serial = SERIAL_COUNTER.next_serial();
+                            tool.tip_down(serial, event.time_msec());
+
+                            // change the keyboard focus
+                            self.update_keyboard_focus(serial);
+                        }
+                        TipState::Up => {
+                            tool.tip_up(event.time_msec());
+                        }
+                    }
+                }
+            }
+            InputEvent::TabletToolButton { event } => {
+                let tool = self.seat.tablet_seat().get_tool(&event.tool());
+
+                if let Some(tool) = tool {
+                    tool.button(
+                        event.button(),
+                        TabletToolButtonEvent::button_state(&event),
+                        SERIAL_COUNTER.next_serial(),
+                        event.time_msec(),
+                    );
+                }
+            }
+            InputEvent::DeviceAdded { device } => {
+                if device.has_capability(DeviceCapability::TabletTool) {
+                    self.seat
+                        .tablet_seat()
+                        .add_tablet::<Self>(&self.display_handle, &TabletDescriptor::from(&device));
+                }
+            }
+            InputEvent::DeviceRemoved { device } => {
+                if device.has_capability(DeviceCapability::TabletTool) {
+                    let tablet_seat = self.seat.tablet_seat();
+
+                    tablet_seat.remove_tablet(&TabletDescriptor::from(&device));
+
+                    // If there are no tablets in seat we can remove all tools
+                    if tablet_seat.count_tablets() == 0 {
+                        tablet_seat.clear_tools();
+                    }
+                }
             }
             _ => {}
         }

@@ -7,7 +7,7 @@ use std::{
 
 use smithay::{
     delegate_data_control, delegate_presentation, delegate_primary_selection,
-    desktop::{layer_map_for_output, PopupManager, Space},
+    desktop::{layer_map_for_output, PopupManager},
     input::{
         pointer::{CursorImageStatus, PointerHandle},
         Seat, SeatState,
@@ -54,8 +54,8 @@ use smithay::{
 };
 
 use crate::{
-    cursor::Cursor, focus::FocusTarget, shell::FullscreenSurface, window::WindowElement,
-    workspace::Workspaces, Backend, CalloopData,
+    cursor::Cursor, focus::FocusTarget, shell::FullscreenSurface, workspace::Workspaces, Backend,
+    CalloopData,
 };
 
 pub struct Buddaraysh<BackendData: Backend + 'static> {
