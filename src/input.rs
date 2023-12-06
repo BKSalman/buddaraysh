@@ -168,12 +168,27 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                     .and_then(|focused| focused.wl_surface())
                 {
                     if let Some(window) = self.window_for_surface(&focused_surface) {
+                        match window {
+                            WindowElement::Wayland(ref w) => {
+                                XdgShellHandler::unfullscreen_request(self, w.toplevel().clone())
+                            }
+                            WindowElement::X11(ref w) => {
+                                let w = w.clone();
+                                self.loop_handle.insert_idle(|data| {
+                                    XwmHandler::unfullscreen_request(
+                                        data,
+                                        data.state.xwm.as_ref().unwrap().id().clone(),
+                                        w,
+                                    )
+                                });
+                            }
+                        }
+
                         window.send_close();
                     }
                 }
             }
             Action::SwitchToWorkspace(workspace_index) => {
-                info!("switching to {workspace_index}");
                 if self
                     .workspaces
                     .set_current_workspace(workspace_index)
@@ -203,7 +218,6 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 let target = self.surface_under(pointer.current_location());
                 let keyboard = self.seat.get_keyboard().unwrap();
                 let serial = SERIAL_COUNTER.next_serial();
-                info!("target: {target:#?}");
                 keyboard.set_focus(self, target.map(|(f, _)| f), serial);
             }
             Action::MoveToWorkspace(workspace_index) => {
