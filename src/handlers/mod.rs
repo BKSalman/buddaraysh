@@ -14,6 +14,7 @@ use smithay::wayland::selection::data_device::{
     set_data_device_focus, ClientDndGrabHandler, ServerDndGrabHandler,
 };
 
+use smithay::wayland::selection::primary_selection::set_primary_focus;
 use smithay::{delegate_data_device, delegate_output, delegate_seat, delegate_tablet_manager};
 
 impl<BackendData: Backend + 'static> SeatHandler for Buddaraysh<BackendData> {
@@ -27,8 +28,9 @@ impl<BackendData: Backend + 'static> SeatHandler for Buddaraysh<BackendData> {
     fn cursor_image(
         &mut self,
         _seat: &Seat<Self>,
-        _image: smithay::input::pointer::CursorImageStatus,
+        image: smithay::input::pointer::CursorImageStatus,
     ) {
+        *self.cursor_status.lock().unwrap() = image;
     }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&FocusTarget>) {
@@ -37,7 +39,8 @@ impl<BackendData: Backend + 'static> SeatHandler for Buddaraysh<BackendData> {
         let wl_surface = focused.and_then(WaylandFocus::wl_surface);
 
         let client = wl_surface.and_then(|s| dh.get_client(s.id()).ok());
-        set_data_device_focus(dh, seat, client);
+        set_data_device_focus(dh, seat, client.clone());
+        set_primary_focus(dh, seat, client);
     }
 }
 

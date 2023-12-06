@@ -85,7 +85,10 @@ enum Error {
 }
 
 fn load_icon(theme: &CursorTheme) -> Result<Vec<Image>, Error> {
-    let icon_path = theme.load_icon("default").ok_or(Error::NoDefaultCursor)?;
+    let icon_path = theme
+        .load_icon("default")
+        .or_else(|| theme.load_icon("left_ptr"))
+        .ok_or(Error::NoDefaultCursor)?;
     let mut cursor_file = std::fs::File::open(icon_path)?;
     let mut cursor_data = Vec::new();
     cursor_file.read_to_end(&mut cursor_data)?;
