@@ -226,6 +226,15 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 }
 
                 let keyboard = self.seat.get_keyboard().unwrap();
+                let pointer = self.pointer.clone();
+
+                // prevent window from duplicating (in the current workspace and the destination workspace)
+                // when it's grabbed
+                if pointer.is_grabbed() {
+                    let time = Instant::now().duration_since(self.start_time);
+                    pointer.unset_grab(self, SERIAL_COUNTER.next_serial(), time.as_millis() as u32);
+                }
+
                 if let Some(window) = keyboard
                     .current_focus()
                     .and_then(|t| t.wl_surface())
