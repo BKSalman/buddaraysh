@@ -7,7 +7,7 @@ use smithay::{
             GestureEndEvent, GesturePinchUpdateEvent as _, GestureSwipeUpdateEvent as _,
             InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent,
             PointerButtonEvent, PointerMotionEvent, ProximityState, TabletToolButtonEvent,
-            TabletToolEvent, TabletToolProximityEvent,
+            TabletToolEvent, TabletToolProximityEvent, TouchEvent,
         },
         libinput::LibinputInputBackend,
         session::Session,
@@ -1137,11 +1137,78 @@ impl Buddaraysh<UdevData> {
                     );
                 }
             }
+            InputEvent::TouchDown { event } => {
+                let touch = self.seat.get_touch();
+                if let Some(touch) = touch {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    let time = event.time_msec();
+                    let output_geometry = self.workspaces.outputs().next().map(|o| {
+                        self.workspaces
+                            .current_workspace()
+                            .output_geometry(o)
+                            .unwrap()
+                    });
+
+                    if let Some(output_geometry) = output_geometry {
+                        let position = event.position_transformed(output_geometry.size)
+                            + output_geometry.loc.to_f64();
+                        if let Some((surface, surface_pos)) = self.surface_under(position) {
+                            let position_inside_surface = position - surface_pos.to_f64();
+                            info!(?position_inside_surface);
+                            touch.down(
+                                serial,
+                                time,
+                                &surface.wl_surface().unwrap(),
+                                position_inside_surface,
+                                event.slot(),
+                            );
+                        }
+                    }
+                }
+            }
+            InputEvent::TouchUp { event } => {
+                let touch = self.seat.get_touch();
+                if let Some(touch) = touch {
+                    touch.up(
+                        SERIAL_COUNTER.next_serial(),
+                        event.time_msec(),
+                        event.slot(),
+                    );
+                }
+            }
+            InputEvent::TouchMotion { event } => {
+                let touch = self.seat.get_touch();
+                if let Some(touch) = touch {
+                    let output_geometry = self.workspaces.outputs().next().map(|o| {
+                        self.workspaces
+                            .current_workspace()
+                            .output_geometry(o)
+                            .unwrap()
+                    });
+
+                    if let Some(output_geometry) = output_geometry {
+                        let position = event.position_transformed(output_geometry.size)
+                            + output_geometry.loc.to_f64();
+                        touch.motion(event.time_msec(), event.slot(), position);
+                    }
+                }
+            }
+            InputEvent::TouchFrame { event: _ } => {
+                // NOTE: not sure if this needs to be handled
+            }
+            InputEvent::TouchCancel { event: _ } => {
+                let touch = self.seat.get_touch();
+                if let Some(touch) = touch {
+                    touch.cancel();
+                }
+            }
             InputEvent::DeviceAdded { device } => {
                 if device.has_capability(DeviceCapability::TabletTool) {
                     self.seat
                         .tablet_seat()
                         .add_tablet::<Self>(&self.display_handle, &TabletDescriptor::from(&device));
+                } else if device.has_capability(DeviceCapability::Touch) {
+                    self.seat.add_touch();
                 }
             }
             InputEvent::DeviceRemoved { device } => {
