@@ -43,3 +43,15 @@ Type=Application
 then open your display manager and run Buddaraysh
 
 #### or you can manually just launch it from tty since wayland is much simpler than x11 in that sense
+
+# Environment variables
+
+| environment variable       | description                   | example value       | default                       |
+| -------------------------- | ----------------------------- | ------------------- | ----------------------------- |
+| XCURSOR_THEME              | specify the cursor theme      | Adwaita             | "default"                     |
+| XCURSOR_SIZE               | specify the cursor size       | 32                  | 24                            |
+| BUD_DRM_DEVICE             | specify the DRM device        | /dev/dri/renderD128 | defaults to the primary gpu   |
+| BUD_NO_VULKAN              | disable vulkan                | yes/1/true/y        | defaults to enabling vulkan   |
+| BUD_LOG                    | specify the logging level     | trace/info/debug    | defaults to debug level       |
+| BUD_BACKEND                | specify buddaraysh's backend  | winit/udev          | udev                          |
+| BUD_DISABLE_DRM_COMPOSITOR | disable drm compositor        | yes/1/true/y        | defaults to enabling drm      |
