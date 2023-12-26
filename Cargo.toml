@@ -18,6 +18,10 @@ tracing-appender = "0.2.3"
 tracing-journald = "0.3.0"
 rand = "0.8.5"
 libsystemd = "0.7.0"
+signal-hook = "0.3.17"
+regex = "1.10.2"
+lazy_static = "1.4.0"
+indexmap = "2.1.0"
 
 [dependencies.smithay]
 default-features = false
