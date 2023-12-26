@@ -42,8 +42,17 @@ impl From<xdg_toplevel::ResizeEdge> for ResizeEdge {
 
 impl From<xwm::ResizeEdge> for ResizeEdge {
     #[inline]
-    fn from(value: xwm::ResizeEdge) -> Self {
-        Self::from_bits(value as u32).unwrap()
+    fn from(x: xwm::ResizeEdge) -> Self {
+        match x {
+            xwm::ResizeEdge::Top => ResizeEdge::TOP,
+            xwm::ResizeEdge::Bottom => ResizeEdge::BOTTOM,
+            xwm::ResizeEdge::Left => ResizeEdge::LEFT,
+            xwm::ResizeEdge::Right => ResizeEdge::RIGHT,
+            xwm::ResizeEdge::TopLeft => ResizeEdge::TOP_LEFT,
+            xwm::ResizeEdge::BottomLeft => ResizeEdge::BOTTOM_LEFT,
+            xwm::ResizeEdge::TopRight => ResizeEdge::TOP_RIGHT,
+            xwm::ResizeEdge::BottomRight => ResizeEdge::BOTTOM_RIGHT,
+        }
     }
 }
 

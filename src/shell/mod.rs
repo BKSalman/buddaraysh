@@ -92,10 +92,7 @@ impl FullscreenSurface {
     }
 
     pub fn get(&self) -> (Option<WindowElement>, Option<usize>) {
-        (
-            self.window.borrow().clone(),
-            self.workspace_index.borrow().clone(),
-        )
+        (self.window.borrow().clone(), *self.workspace_index.borrow())
     }
 
     pub fn clear(&self) -> (Option<WindowElement>, Option<usize>) {
