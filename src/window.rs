@@ -24,13 +24,24 @@ use smithay::{
     },
     output::Output,
     reexports::{
-        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
+        wayland_protocols::{
+            wp::presentation_time::server::wp_presentation_feedback,
+            xdg::{
+                decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
+                shell::server::xdg_toplevel,
+            },
+        },
         wayland_server::protocol::wl_surface::WlSurface,
     },
     render_elements,
-    utils::{user_data::UserDataMap, IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial},
+    utils::{
+        user_data::UserDataMap, IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial, Size,
+    },
     wayland::{
-        compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus,
+        compositor::{with_states, SurfaceData as WlSurfaceData},
+        dmabuf::DmabufFeedback,
+        seat::WaylandFocus,
+        shell::xdg::{SurfaceCachedState, XdgToplevelSurfaceData},
     },
 };
 #[cfg(feature = "xwayland")]
@@ -201,6 +212,133 @@ impl WindowElement {
                 if let Err(err) = w.close() {
                     tracing::warn!(?w, ?err, "Failed to close X11 window");
                 }
+            }
+        }
+    }
+
+    pub fn change_geometry(&self, new_geo: Rectangle<i32, Logical>) {
+        match self {
+            WindowElement::Wayland(w) => {
+                w.toplevel().with_pending_state(|state| {
+                    state.size = Some(new_geo.size);
+                });
+            }
+            WindowElement::X11(x11_surface) => {
+                let _ = x11_surface.configure(new_geo);
+            }
+        }
+    }
+
+    pub fn is_decorated(&self, pending: bool) -> bool {
+        match self {
+            WindowElement::Wayland(window) => {
+                if pending {
+                    window.toplevel().with_pending_state(|pending| {
+                        pending
+                            .decoration_mode
+                            .map(|mode| mode == DecorationMode::ClientSide)
+                            .unwrap_or(true)
+                    })
+                } else {
+                    window
+                        .toplevel()
+                        .current_state()
+                        .decoration_mode
+                        .map(|mode| mode == DecorationMode::ClientSide)
+                        .unwrap_or(true)
+                }
+            }
+            WindowElement::X11(surface) => surface.is_decorated(),
+        }
+    }
+
+    pub fn max_size(&self) -> Option<Size<i32, Logical>> {
+        match self {
+            WindowElement::Wayland(window) => {
+                Some(with_states(window.toplevel().wl_surface(), |states| {
+                    states.cached_state.current::<SurfaceCachedState>().max_size
+                }))
+                .filter(|size| !(size.w == 0 && size.h == 0))
+            }
+            WindowElement::X11(surface) => surface.max_size(),
+        }
+        .map(|size| {
+            if self.is_decorated(false) {
+                size + (0, HEADER_BAR_HEIGHT).into()
+            } else {
+                size
+            }
+        })
+    }
+
+    pub fn min_size(&self) -> Option<Size<i32, Logical>> {
+        match self {
+            WindowElement::Wayland(window) => {
+                Some(with_states(window.toplevel().wl_surface(), |states| {
+                    states.cached_state.current::<SurfaceCachedState>().min_size
+                }))
+                .filter(|size| !(size.w == 0 && size.h == 0))
+            }
+            WindowElement::X11(surface) => surface.min_size(),
+        }
+        .map(|size| {
+            if self.is_decorated(false) {
+                size + (0, HEADER_BAR_HEIGHT).into()
+            } else {
+                size
+            }
+        })
+    }
+
+    pub fn app_id(&self) -> String {
+        match self {
+            WindowElement::Wayland(window) => {
+                with_states(window.toplevel().wl_surface(), |states| {
+                    states
+                        .data_map
+                        .get::<XdgToplevelSurfaceData>()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .app_id
+                        .clone()
+                        .unwrap_or_default()
+                })
+            }
+            WindowElement::X11(surface) => surface.class(),
+        }
+    }
+
+    pub fn title(&self) -> String {
+        match self {
+            WindowElement::Wayland(window) => {
+                with_states(window.toplevel().wl_surface(), |states| {
+                    states
+                        .data_map
+                        .get::<XdgToplevelSurfaceData>()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .title
+                        .clone()
+                        .unwrap_or_default()
+                })
+            }
+            WindowElement::X11(surface) => surface.title(),
+        }
+    }
+
+    pub fn set_fullscreen(&self, fullscreen: bool) {
+        match self {
+            WindowElement::Wayland(window) => window.toplevel().with_pending_state(|state| {
+                if fullscreen {
+                    state.states.set(xdg_toplevel::State::Fullscreen);
+                } else {
+                    state.states.unset(xdg_toplevel::State::Fullscreen);
+                }
+            }),
+            WindowElement::X11(surface) => {
+                let _ = surface.set_fullscreen(fullscreen);
             }
         }
     }
