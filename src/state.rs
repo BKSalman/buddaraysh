@@ -1,6 +1,8 @@
 use std::{
+    collections::HashMap,
     ffi::OsString,
     os::fd::OwnedFd,
+    process::Child,
     sync::{atomic::AtomicBool, Arc, Mutex},
     time::Duration,
 };
@@ -63,6 +65,8 @@ use crate::{
     workspace::Workspaces, Backend, CalloopData,
 };
 
+pub type ChildID = u32;
+
 pub struct Buddaraysh<BackendData: Backend + 'static> {
     pub start_time: std::time::Instant,
     pub socket_name: OsString,
@@ -70,6 +74,9 @@ pub struct Buddaraysh<BackendData: Backend + 'static> {
     pub loop_handle: LoopHandle<'static, CalloopData<BackendData>>,
     pub running: Arc<AtomicBool>,
     pub clock: Clock<Monotonic>,
+
+    pub child_processes: HashMap<ChildID, Child>,
+    pub reap_requested: Arc<AtomicBool>,
 
     pub backend_data: BackendData,
 
@@ -231,6 +238,8 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             override_redirect_windows: Vec::new(),
             loop_signal,
             socket_name,
+            child_processes: HashMap::default(),
+            reap_requested: Default::default(),
 
             compositor_state,
             xdg_shell_state,

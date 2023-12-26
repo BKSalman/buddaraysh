@@ -789,6 +789,12 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
 
     systemd::ready(&state);
 
+    _ = signal_hook::flag::register(
+        signal_hook::consts::signal::SIGCHLD,
+        state.reap_requested.clone(),
+    )
+    .map_err(|err| tracing::error!("Cannot register SIGCHLD signal handler: {:?}", err));
+
     /*
      * And run our loop
      */
@@ -814,6 +820,12 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
                 .refresh();
             state.popups.cleanup();
             display_handle.flush_clients().unwrap();
+        }
+
+        if state.reap_requested.swap(false, Ordering::SeqCst) {
+            state
+                .child_processes
+                .retain(|_, child| child.try_wait().map_or(true, |ret| ret.is_none()));
         }
     }
 

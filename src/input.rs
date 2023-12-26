@@ -151,8 +151,9 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                     )
                     .spawn()
                 {
-                    Ok(_child) => {
+                    Ok(child) => {
                         // TODO: keep track of child processes
+                        self.child_processes.insert(child.id(), child);
                     }
                     Err(e) => error!("Failed to run command: {e}"),
                 }

@@ -1,4 +1,7 @@
-use std::{sync::Mutex, time::Duration};
+use std::{
+    sync::{atomic::Ordering, Mutex},
+    time::Duration,
+};
 
 use smithay::{
     backend::{
@@ -181,12 +184,23 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     for workspace in state.workspaces.workspaces_mut() {
         workspace.add_output(&output, (0, 0));
     }
+    _ = signal_hook::flag::register(
+        signal_hook::consts::signal::SIGCHLD,
+        state.reap_requested.clone(),
+    )
+    .map_err(|err| tracing::error!("Cannot register SIGCHLD signal handler: {:?}", err));
 
     event_loop
         .handle()
         .insert_source(winit, move |event, _, data| {
             let display = &mut data.display_handle;
             let state = &mut data.state;
+
+            if state.reap_requested.swap(false, Ordering::SeqCst) {
+                state
+                    .child_processes
+                    .retain(|_, child| child.try_wait().map_or(true, |ret| ret.is_none()));
+            }
 
             match event {
                 WinitEvent::Resized { size, .. } => {
