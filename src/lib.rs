@@ -18,6 +18,7 @@ mod workspace;
 use smithay::{
     output::Output,
     reexports::wayland_server::{protocol::wl_surface::WlSurface, DisplayHandle},
+    utils::{Logical, Rectangle},
 };
 pub use state::Buddaraysh;
 
@@ -47,4 +48,24 @@ pub enum Action {
     MoveToWorkspace(usize),
     None,
     Close,
+}
+
+pub trait OutputExt {
+    fn geometry(&self) -> Rectangle<i32, Logical>;
+}
+
+impl OutputExt for Output {
+    fn geometry(&self) -> Rectangle<i32, Logical> {
+        Rectangle::from_loc_and_size(self.current_location(), {
+            self.current_transform()
+                .transform_size(
+                    self.current_mode()
+                        .map(|m| m.size)
+                        .unwrap_or_else(|| (0, 0).into()),
+                )
+                .to_f64()
+                .to_logical(self.current_scale().fractional_scale())
+                .to_i32_round()
+        })
+    }
 }
