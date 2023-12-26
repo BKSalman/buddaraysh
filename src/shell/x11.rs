@@ -2,8 +2,11 @@ use std::{cell::RefCell, os::unix::io::OwnedFd};
 
 use smithay::{
     desktop::space::SpaceElement,
-    input::pointer::Focus,
-    utils::{Logical, Rectangle, SERIAL_COUNTER},
+    input::{
+        pointer::{Focus, GrabStartData},
+        Seat,
+    },
+    utils::{Logical, Rectangle, Serial, SERIAL_COUNTER},
     wayland::{
         compositor,
         selection::data_device::{
@@ -259,7 +262,14 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         _button: u32,
         edges: X11ResizeEdge,
     ) {
-        self.state.resize_request_x11(edges, x11_surface);
+        let start_data = self.state.pointer.grab_start_data().unwrap();
+        self.state.resize_request_x11(
+            edges,
+            x11_surface,
+            self.state.seat.clone(),
+            SERIAL_COUNTER.next_serial(),
+            start_data,
+        );
     }
 
     fn move_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32) {
@@ -344,10 +354,15 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
 }
 
 impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
-    pub fn resize_request_x11(&mut self, edges: X11ResizeEdge, x11_surface: X11Surface) {
-        let start_data = self.pointer.grab_start_data().unwrap();
-        let pointer = self.pointer.clone();
-        let serial = SERIAL_COUNTER.next_serial();
+    pub fn resize_request_x11(
+        &mut self,
+        edges: X11ResizeEdge,
+        x11_surface: X11Surface,
+        seat: Seat<Buddaraysh<BackendData>>,
+        serial: Serial,
+        start_data: GrabStartData<Buddaraysh<BackendData>>,
+    ) {
+        let pointer = seat.get_pointer().unwrap();
 
         let Some(window) = self
             .workspaces

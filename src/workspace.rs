@@ -60,7 +60,7 @@ impl Workspaces {
         let point: Point<f64, Logical> = point.into();
         self.workspaces
             .iter()
-            .flat_map(move |w| w.output_under(point.clone()))
+            .flat_map(move |w| w.output_under(point))
     }
 
     pub fn workspaces_mut(&mut self) -> Vec<&mut Workspace> {

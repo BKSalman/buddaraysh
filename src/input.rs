@@ -32,9 +32,10 @@ use smithay::{
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
         pointer_constraints::{with_pointer_constraint, PointerConstraint},
         seat::WaylandFocus,
-        shell::wlr_layer::Layer as WlrLayer,
+        shell::{wlr_layer::Layer as WlrLayer, xdg::XdgShellHandler},
         tablet_manager::{TabletDescriptor, TabletSeatTrait},
     },
+    xwayland::{xwm::ResizeEdge as X11ResizeEdge, XwmHandler},
 };
 use tracing::{error, info};
 
@@ -177,7 +178,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                                 self.loop_handle.insert_idle(|data| {
                                     XwmHandler::unfullscreen_request(
                                         data,
-                                        data.state.xwm.as_ref().unwrap().id().clone(),
+                                        data.state.xwm.as_ref().unwrap().id(),
                                         w,
                                     )
                                 });
@@ -862,12 +863,40 @@ impl Buddaraysh<UdevData> {
                                         );
                                     }
                                     #[cfg(feature = "xwayland")]
-                                    WindowElement::X11(w) => {
-                                        let window = w.clone();
-                                        self.loop_handle.insert_idle(move |data| {
-                                            // TODO: get resize edge
-                                            // data.state.resize_request_x11(&window)
-                                        });
+                                    WindowElement::X11(ref w) => {
+                                        let pointer_location = pointer.current_location();
+                                        let window_location = self
+                                            .workspaces
+                                            .current_workspace()
+                                            .window_location(&window)
+                                            .unwrap();
+                                        let geometry = window.geometry();
+                                        let diff = pointer_location - window_location.to_f64();
+                                        let half_width = (geometry.size.w / 2) as f64;
+                                        let half_height = (geometry.size.h / 2) as f64;
+                                        let edge = if diff.x < half_width && diff.y < half_height {
+                                            X11ResizeEdge::TopLeft
+                                        } else if diff.x > half_width && diff.y < half_height {
+                                            X11ResizeEdge::TopRight
+                                        } else if diff.x < half_width && diff.y > half_height {
+                                            X11ResizeEdge::BottomLeft
+                                        } else {
+                                            X11ResizeEdge::BottomRight
+                                        };
+
+                                        let start_data = GrabStartData {
+                                            focus: None,
+                                            button,
+                                            location: pointer.current_location(),
+                                        };
+
+                                        self.resize_request_x11(
+                                            edge,
+                                            w.clone(),
+                                            self.seat.clone(),
+                                            serial,
+                                            start_data,
+                                        );
                                     }
                                 }
                             }

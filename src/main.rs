@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 pub fn logging() {
     if let Err(_e) = std::env::var("BUD_LOG") {
         tracing::info!(
-            "no log level specified, defaulting to debug level for ytdlp_gui crate only"
+            "no log level specified, defaulting to debug level for buddaraysh crate only"
         );
         std::env::set_var("BUD_LOG", "none,buddaraysh=debug");
     }

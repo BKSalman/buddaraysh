@@ -105,6 +105,7 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
             self.workspaces.current_workspace().space(),
             surface,
         );
+
         resize_grab::handle_commit(self.workspaces.current_workspace_mut().space_mut(), surface);
     }
 }
