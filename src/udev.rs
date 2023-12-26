@@ -116,6 +116,7 @@ use crate::{
     render::{output_elements, CustomRenderElements},
     systemd,
     window::WindowElement,
+    workspace::Workspace,
     Backend, Buddaraysh, CalloopData,
 };
 
@@ -813,11 +814,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         if result.is_err() {
             state.running.store(false, Ordering::SeqCst);
         } else {
-            state
-                .workspaces
-                .current_workspace_mut()
-                .space_mut()
-                .refresh();
+            state.workspaces.current_workspace_mut().refresh();
             state.popups.cleanup();
             display_handle.flush_clients().unwrap();
         }
@@ -1030,22 +1027,12 @@ impl Buddaraysh<UdevData> {
             let global = output.create_global::<Buddaraysh<UdevData>>(&self.display_handle);
 
             // TODO: make this configurable
-            let x = self.workspaces.outputs().fold(0, |acc, o| {
-                acc + self
-                    .workspaces
-                    .current_workspace()
-                    .output_geometry(o)
-                    .unwrap()
-                    .size
-                    .w
-            });
-            let position = (x, 0).into();
+            let w = self.global_space().size.w;
+            let position = (w, 0).into();
 
             output.set_preferred(wl_mode);
             output.change_current_state(Some(wl_mode), None, None, Some(position));
-            for workspace in self.workspaces.workspaces_mut() {
-                workspace.add_output(&output, position);
-            }
+            self.workspaces.add_output(&output);
 
             output.user_data().insert_if_missing(|| UdevOutputId {
                 crtc,
@@ -1512,7 +1499,7 @@ impl Buddaraysh<UdevData> {
         let result = render_surface(
             surface,
             &mut renderer,
-            self.workspaces.current_workspace().space(),
+            self.workspaces.current_workspace(),
             &output,
             self.pointer.current_location(),
             &pointer_image,
@@ -1522,7 +1509,6 @@ impl Buddaraysh<UdevData> {
             &self.clock,
             // self.show_window_preview,
             screencopy,
-            self.workspaces.current_workspace_index(),
         );
 
         let reschedule = match &result {
@@ -1683,7 +1669,8 @@ fn get_surface_dmabuf_feedback(
 fn render_surface<'a, 'b, 'c>(
     surface: &'a mut Surface,
     renderer: &mut UdevRenderer<'a, 'b, 'c>,
-    space: &Space<WindowElement>,
+    // space: &Space<WindowElement>,
+    workspace: &Workspace,
     output: &Output,
     pointer_location: Point<f64, Logical>,
     pointer_image: &TextureBuffer<MultiTexture>,
@@ -1693,9 +1680,8 @@ fn render_surface<'a, 'b, 'c>(
     clock: &Clock<Monotonic>,
     // show_window_preview: bool,
     screencopy: Option<Screencopy>,
-    current_workspace_index: usize,
 ) -> Result<bool, SwapBuffersError> {
-    let output_geometry = space.output_geometry(output).unwrap();
+    let output_geometry = workspace.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
 
     let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
@@ -1772,13 +1758,8 @@ fn render_surface<'a, 'b, 'c>(
         custom_elements.push(CustomRenderElements::Fps(element.clone()));
     }
 
-    let (elements, clear_color) = output_elements(
-        output,
-        space,
-        custom_elements,
-        renderer,
-        current_workspace_index,
-    );
+    let (elements, clear_color) = output_elements(output, workspace, custom_elements, renderer);
+
     let (res, frame_result) =
         surface
             .compositor
@@ -1860,7 +1841,7 @@ fn render_surface<'a, 'b, 'c>(
     post_repaint(
         output,
         &res.states,
-        space,
+        workspace,
         surface
             .dmabuf_feedback
             .as_ref()
@@ -1872,7 +1853,8 @@ fn render_surface<'a, 'b, 'c>(
     );
 
     if res.rendered {
-        let output_presentation_feedback = take_presentation_feedback(output, space, &res.states);
+        let output_presentation_feedback =
+            take_presentation_feedback(output, workspace, &res.states);
         surface
             .compositor
             .queue_frame(res.sync, res.damage, Some(output_presentation_feedback))
@@ -1892,14 +1874,14 @@ pub struct SurfaceDmabufFeedback<'a> {
 pub fn post_repaint(
     output: &Output,
     render_element_states: &RenderElementStates,
-    space: &Space<WindowElement>,
+    workspace: &Workspace,
     dmabuf_feedback: Option<SurfaceDmabufFeedback<'_>>,
     time: impl Into<Duration>,
 ) {
     let time = time.into();
     let throttle = Some(Duration::from_secs(1));
 
-    space.elements().for_each(|window| {
+    workspace.windows().for_each(|window| {
         window.with_surfaces(|surface, states| {
             let primary_scanout_output = update_surface_primary_scanout_output(
                 surface,
@@ -1916,7 +1898,7 @@ pub fn post_repaint(
             }
         });
 
-        if space.outputs_for_element(window).contains(output) {
+        if workspace.outputs_for_window(window).contains(output) {
             window.send_frame(output, time, throttle, surface_primary_scanout_output);
             if let Some(dmabuf_feedback) = dmabuf_feedback {
                 window.send_dmabuf_feedback(
@@ -1973,13 +1955,13 @@ pub fn post_repaint(
 #[profiling::function]
 pub fn take_presentation_feedback(
     output: &Output,
-    space: &Space<WindowElement>,
+    workspace: &Workspace,
     render_element_states: &RenderElementStates,
 ) -> OutputPresentationFeedback {
     let mut output_presentation_feedback = OutputPresentationFeedback::new(output);
 
-    space.elements().for_each(|window| {
-        if space.outputs_for_element(window).contains(output) {
+    workspace.windows().for_each(|window| {
+        if workspace.outputs_for_window(window).contains(output) {
             window.take_presentation_feedback(
                 &mut output_presentation_feedback,
                 surface_primary_scanout_output,

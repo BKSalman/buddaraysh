@@ -63,12 +63,16 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         }
 
         let window = WindowElement::X11(window);
-        place_new_window(
-            self.state.workspaces.current_workspace_mut().space_mut(),
-            self.state.pointer.current_location(),
-            &window,
-            true,
-        );
+        // place_new_window(
+        //     self.state.workspaces.current_workspace_mut().space_mut(),
+        //     self.state.pointer.current_location(),
+        //     &window,
+        //     true,
+        // );
+        self.state
+            .workspaces
+            .current_workspace_mut()
+            .map_window(window.clone(), self.state.pointer.current_location());
         let bbox = self
             .state
             .workspaces
@@ -92,7 +96,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         self.state
             .workspaces
             .current_workspace_mut()
-            .map_window(window, location, true);
+            .map_window(window, self.state.pointer.current_location());
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -185,7 +189,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         self.state
             .workspaces
             .current_workspace_mut()
-            .map_window(elem, geometry.loc, false);
+            .map_window(elem, self.state.pointer.current_location());
         // TODO: We don't properly handle the order of override-redirect windows here,
         //       they are always mapped top and then never reordered.
     }
@@ -216,47 +220,53 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
             self.state
                 .workspaces
                 .current_workspace_mut()
-                .map_window(elem, old_geo.loc, false);
+                .map_window(elem, self.state.pointer.current_location());
         }
     }
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(elem) = self
+        let fullscreen = self
             .state
             .workspaces
             .current_workspace()
             .windows()
             .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
-        {
-            let outputs_for_window = self
-                .state
-                .workspaces
-                .current_workspace()
-                .outputs_for_window(elem);
-            let output = outputs_for_window
-                .first()
-                // The window hasn't been mapped yet, use the primary output instead
-                .or_else(|| self.state.workspaces.outputs().next())
-                // Assumes that at least one output exists
-                .expect("No outputs found");
-            let geometry = self
-                .state
-                .workspaces
-                .current_workspace()
-                .output_geometry(output)
-                .unwrap();
+            .map(|elem| {
+                let outputs_for_window = self
+                    .state
+                    .workspaces
+                    .current_workspace()
+                    .outputs_for_window(elem);
+                let output = outputs_for_window
+                    .first()
+                    // The window hasn't been mapped yet, use the primary output instead
+                    .or_else(|| self.state.workspaces.outputs().next())
+                    // Assumes that at least one output exists
+                    .expect("No outputs found");
+                let geometry = self
+                    .state
+                    .workspaces
+                    .current_workspace()
+                    .output_geometry(output)
+                    .unwrap();
 
-            window.set_fullscreen(true).unwrap();
-            elem.set_ssd(false);
-            window.configure(geometry).unwrap();
-            output
-                .user_data()
-                .insert_if_missing(FullscreenSurface::default);
-            output.user_data().get::<FullscreenSurface>().unwrap().set(
-                elem.clone(),
-                self.state.workspaces.current_workspace_index(),
-            );
-            trace!("Fullscreening: {:?}", elem);
+                window.set_fullscreen(true).unwrap();
+                elem.set_ssd(false);
+                window.configure(geometry).unwrap();
+                output
+                    .user_data()
+                    .insert_if_missing(FullscreenSurface::default);
+                let fullscreen = output.user_data().get::<FullscreenSurface>().unwrap();
+                fullscreen.set(
+                    elem.clone(),
+                    self.state.workspaces.current_workspace_index(),
+                );
+                trace!("Fullscreening: {:?}", fullscreen);
+                elem.clone()
+            });
+
+        if let Some(fullscreen) = fullscreen {
+            self.state.workspaces.current_workspace_mut().fullscreen = Some(fullscreen);
         }
     }
 
@@ -270,13 +280,13 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         {
             window.set_fullscreen(false).unwrap();
             elem.set_ssd(!window.is_decorated());
-            if let Some(output) = self.state.workspaces.outputs().find(|o| {
-                o.user_data()
-                    .get::<FullscreenSurface>()
-                    .and_then(|f| f.get().0)
-                    .map(|w| &w == elem)
-                    .unwrap_or(false)
-            }) {
+            if let Some(output) = self
+                .state
+                .workspaces
+                .current_workspace_mut()
+                .fullscreen
+                .take()
+            {
                 trace!("Unfullscreening: {:?}", elem);
                 output
                     .user_data()
@@ -286,6 +296,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
                 window
                     .configure(self.state.workspaces.current_workspace().window_bbox(elem))
                     .unwrap();
+                let output = self.state.workspaces.outputs().next().unwrap();
                 self.state.backend_data.reset_buffers(output);
             }
         }
@@ -299,13 +310,8 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         edges: X11ResizeEdge,
     ) {
         let start_data = self.state.pointer.grab_start_data().unwrap();
-        self.state.resize_request_x11(
-            edges,
-            x11_surface,
-            self.state.seat.clone(),
-            SERIAL_COUNTER.next_serial(),
-            start_data,
-        );
+        self.state
+            .resize_request_x11(edges, x11_surface, start_data);
     }
 
     fn move_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32) {
@@ -403,11 +409,10 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         &mut self,
         edges: X11ResizeEdge,
         x11_surface: X11Surface,
-        seat: Seat<Buddaraysh<BackendData>>,
-        serial: Serial,
-        start_data: GrabStartData<Buddaraysh<BackendData>>,
+        start_data: smithay::input::pointer::GrabStartData<Buddaraysh<BackendData>>,
     ) {
-        let pointer = seat.get_pointer().unwrap();
+        let pointer = self.pointer.clone();
+        let serial = SERIAL_COUNTER.next_serial();
 
         let Some(window) = self
             .workspaces
@@ -446,12 +451,14 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             };
         });
 
+        tracing::info!(?edges);
+
         let grab = ResizeSurfaceGrab {
             start_data,
             window: window.clone(),
             edges: edges.into(),
             initial_rect,
-            last_window_size: initial_rect.size,
+            last_window_size: initial_window_size,
         };
 
         pointer.set_grab(self, grab, serial, Focus::Clear);
@@ -501,7 +508,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
             .save(old_geo);
         self.workspaces
             .current_workspace_mut()
-            .map_window(elem, geometry.loc, false);
+            .map_window(elem, self.pointer.current_location());
     }
 
     pub fn move_request_x11(

@@ -25,7 +25,7 @@ use smithay::{
             Display, DisplayHandle,
         },
     },
-    utils::{Clock, Logical, Monotonic, Point},
+    utils::{Clock, Logical, Monotonic, Point, Rectangle},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
@@ -61,8 +61,11 @@ use smithay::{
 };
 
 use crate::{
-    cursor::Cursor, focus::FocusTarget, shell::FullscreenSurface, window::WindowElement,
-    workspace::Workspaces, Backend, CalloopData,
+    cursor::Cursor,
+    focus::FocusTarget,
+    shell::FullscreenSurface,
+    workspace::{WorkspaceSet, Workspaces},
+    Backend, CalloopData, OutputExt,
 };
 
 pub type ChildID = u32;
@@ -339,20 +342,10 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             .unwrap();
         let layers = layer_map_for_output(output);
 
-        if let Some(window) =
-            output
-                .user_data()
-                .get::<FullscreenSurface>()
-                .and_then(|f| match f.get() {
-                    (Some(window), Some(workspace_index))
-                        if workspace_index == self.workspaces.current_workspace_index() =>
-                    {
-                        Some(window)
-                    }
-                    _ => None,
-                })
-        {
-            return Some((window.into(), output_geo.loc));
+        let mut under = None;
+        // TODO: make a method to get output of workspace
+        if let Some(window) = self.workspaces.current_workspace().fullscreen.clone() {
+            under = Some((window.into(), output_geo.loc));
         } else if let Some(layer) = layers
             .layer_under(WlrLayer::Overlay, pos)
             .or_else(|| layers.layer_under(WlrLayer::Top, pos))
@@ -379,6 +372,42 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         }
 
         None
+    }
+
+    /// the geometry of the output under the passed position
+    fn output_under_geometry(&self, pos: Point<f64, Logical>) -> Option<Rectangle<i32, Logical>> {
+        let output = self.workspaces.outputs().find(|o| {
+            let geometry = self
+                .workspaces
+                .current_workspace()
+                .output_geometry(o)
+                .unwrap();
+            geometry.contains(pos.to_i32_round())
+        })?;
+
+        self.workspaces.current_workspace().output_geometry(output)
+    }
+
+    pub fn outputs(&self) -> impl DoubleEndedIterator<Item = &smithay::output::Output> {
+        self.workspaces.sets.keys().chain(
+            self.workspaces
+                .backup_set
+                .as_ref()
+                .into_iter()
+                .map(|set| &set.output),
+        )
+    }
+
+    pub fn global_space(&self) -> Rectangle<i32, Logical> {
+        self.outputs()
+            .fold(
+                Option::<Rectangle<i32, Logical>>::None,
+                |maybe_geo, output| match maybe_geo {
+                    Some(rect) => Some(rect.merge(output.geometry())),
+                    None => Some(output.geometry()),
+                },
+            )
+            .unwrap_or_default()
     }
 }
 

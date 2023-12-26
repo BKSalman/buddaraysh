@@ -7,8 +7,9 @@ use smithay::{
     utils::{Logical, Point, Rectangle},
 };
 
-use crate::window::WindowElement;
+use crate::{window::WindowElement, workspace::Workspace};
 
+pub mod layout;
 mod x11;
 pub mod xdg;
 
@@ -58,15 +59,15 @@ fn place_new_window(
 fn fullscreen_output_geometry(
     wl_surface: &WlSurface,
     wl_output: Option<&WlOutput>,
-    space: &mut Space<WindowElement>,
+    workspace: &mut Workspace,
 ) -> Option<Rectangle<i32, Logical>> {
     // First test if a specific output has been requested
     // if the requested output is not found ignore the request
     wl_output
         .and_then(Output::from_resource)
         .or_else(|| {
-            let w = space
-                .elements()
+            let w = workspace
+                .windows()
                 .find(|window| {
                     window
                         .wl_surface()
@@ -74,12 +75,12 @@ fn fullscreen_output_geometry(
                         .unwrap_or(false)
                 })
                 .cloned();
-            w.and_then(|w| space.outputs_for_element(&w).get(0).cloned())
+            w.and_then(|w| workspace.outputs_for_window(&w).get(0).cloned())
         })
-        .and_then(|o| space.output_geometry(&o))
+        .and_then(|o| workspace.output_geometry(&o))
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, PartialEq, Clone)]
 pub struct FullscreenSurface {
     window: RefCell<Option<WindowElement>>,
     workspace_index: RefCell<Option<usize>>,

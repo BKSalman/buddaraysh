@@ -1,6 +1,9 @@
-use crate::{focus::FocusTarget, window::WindowElement, Backend, Buddaraysh, BTN_LEFT, BTN_RIGHT};
+use crate::{
+    focus::FocusTarget, window::WindowElement, workspace::Workspace, Backend, Buddaraysh, BTN_LEFT,
+    BTN_RIGHT,
+};
 use smithay::{
-    desktop::{space::SpaceElement, Space},
+    desktop::space::SpaceElement,
     input::pointer::{
         AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
         GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
@@ -116,8 +119,8 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
         let max_height = (max_size.h == 0).then(i32::max_value).unwrap_or(max_size.h);
 
         self.last_window_size = Size::from((
-            new_window_width.max(min_width).min(max_width),
-            new_window_height.max(min_height).min(max_height),
+            new_window_width.clamp(min_width, max_width),
+            new_window_height.clamp(min_height, max_height),
         ));
 
         match &self.window {
@@ -368,13 +371,13 @@ impl ResizeSurfaceState {
 }
 
 /// Should be called on `WlSurface::commit`
-pub fn handle_commit(space: &mut Space<WindowElement>, surface: &WlSurface) -> Option<()> {
-    let window = space
-        .elements()
+pub fn handle_commit(workspace: &mut Workspace, surface: &WlSurface) -> Option<()> {
+    let window = workspace
+        .windows()
         .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
         .cloned()?;
 
-    let mut window_loc = space.element_location(&window)?;
+    let mut window_loc = workspace.window_location(&window)?;
     let geometry = window.geometry();
 
     let new_loc: Point<Option<i32>, Logical> = ResizeSurfaceState::with(surface, |state| {
@@ -407,7 +410,11 @@ pub fn handle_commit(space: &mut Space<WindowElement>, surface: &WlSurface) -> O
 
     if new_loc.x.is_some() || new_loc.y.is_some() {
         // If TOP or LEFT side of the window got resized, we have to move it
-        space.map_element(window, window_loc, false);
+        // TODO: add tiling resizing
+        workspace.tiling_layer.unmap_element(&window);
+        workspace
+            .floating_layer
+            .map_element(window, window_loc, false);
     }
 
     Some(())

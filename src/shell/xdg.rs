@@ -35,6 +35,7 @@ use smithay::{
 use tracing::{debug, trace};
 
 use crate::{
+    focus::FocusTarget,
     grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
     shell::FullscreenSurface,
     ssd::HEADER_BAR_HEIGHT,
@@ -51,12 +52,15 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let window = WindowElement::Wayland(Window::new(surface));
-        place_new_window(
-            self.workspaces.current_workspace_mut().space_mut(),
-            self.pointer.current_location(),
-            &window,
-            true,
-        );
+        self.workspaces
+            .current_workspace_mut()
+            .map_window(window, self.pointer.current_location());
+        // place_new_window(
+        //     self.workspaces.current_workspace_mut().space_mut(),
+        //     self.pointer.current_location(),
+        //     &window,
+        //     true,
+        // );
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
@@ -70,12 +74,35 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
         positioner: PositionerState,
         token: u32,
     ) {
+        tracing::info!("reposition request");
         surface.with_pending_state(|state| {
             // NOTE: This is again a simplification, a proper compositor would
             // calculate the geometry of the popup here. For simplicity we just
             // use the default implementation here that does not take the
             // window position and output constraints into account.
+            let cursor_location = self.pointer.current_location();
+            let output = self
+                .workspaces
+                .current_workspace()
+                .output_under(cursor_location)
+                .next()
+                .or(self.workspaces.current_workspace().outputs().next())
+                .unwrap();
+
+            let output_geometry = self
+                .workspaces
+                .current_workspace()
+                .output_geometry(output)
+                .unwrap();
+
             let geometry = positioner.get_geometry();
+
+            // TODO
+            // tracing::info!(?output_geometry, ?geometry);
+
+            // if geometry.loc.x + geometry.size.w > output_geometry.size.w {
+
+            // }
             state.geometry = geometry;
             state.positioner = positioner;
         });
@@ -104,8 +131,54 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
         }
     }
 
-    fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
-        // TODO popup grabs
+    fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
+        let seat: Seat<Buddaraysh<BackendData>> = Seat::from_resource(&seat).unwrap();
+        let kind = PopupKind::Xdg(surface);
+        if let Some(root) = find_popup_root_surface(&kind).ok().and_then(|root| {
+            self.workspaces
+                .current_workspace()
+                .windows()
+                .find(|w| w.wl_surface().map(|s| s == root).unwrap_or(false))
+                .cloned()
+                .map(FocusTarget::Window)
+                .or_else(|| {
+                    self.workspaces
+                        .outputs()
+                        .find_map(|o| {
+                            let map = layer_map_for_output(o);
+                            map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)
+                                .cloned()
+                        })
+                        .map(FocusTarget::LayerSurface)
+                })
+        }) {
+            let ret = self.popups.grab_popup(root, kind, &seat, serial);
+
+            if let Ok(mut grab) = ret {
+                if let Some(keyboard) = seat.get_keyboard() {
+                    if keyboard.is_grabbed()
+                        && !(keyboard.has_grab(serial)
+                            || keyboard.has_grab(grab.previous_serial().unwrap_or(serial)))
+                    {
+                        grab.ungrab(PopupUngrabStrategy::All);
+                        return;
+                    }
+                    keyboard.set_focus(self, grab.current_grab(), serial);
+                    keyboard.set_grab(PopupKeyboardGrab::new(&grab), serial);
+                }
+                if let Some(pointer) = seat.get_pointer() {
+                    if pointer.is_grabbed()
+                        && !(pointer.has_grab(serial)
+                            || pointer
+                                .has_grab(grab.previous_serial().unwrap_or_else(|| grab.serial())))
+                    {
+                        grab.ungrab(PopupUngrabStrategy::All);
+                        return;
+                    }
+                    pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
+                }
+            }
+        }
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
@@ -131,10 +204,10 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
             let output_geometry = fullscreen_output_geometry(
                 wl_surface,
                 wl_output.as_ref(),
-                self.workspaces.current_workspace_mut().space_mut(),
+                self.workspaces.current_workspace_mut(),
             );
 
-            if let Some(geometry) = output_geometry {
+            let fullscreen = output_geometry.map(|geometry| {
                 let output = wl_output
                     .as_ref()
                     .and_then(Output::from_resource)
@@ -169,6 +242,11 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
                     .unwrap()
                     .set(window.clone(), self.workspaces.current_workspace_index());
                 trace!("Fullscreening: {:?}", window);
+                window.clone()
+            });
+
+            if let Some(fullscreen) = fullscreen {
+                self.workspaces.current_workspace_mut().fullscreen = Some(fullscreen);
             }
         }
 
@@ -186,6 +264,7 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
             return;
         }
 
+        // TODO: make method to get output of fullscreen, and fullscreen of output
         let ret = surface.with_pending_state(|state| {
             state.states.unset(xdg_toplevel::State::Fullscreen);
             state.size = None;
@@ -193,9 +272,10 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
         });
         if let Some(output) = ret {
             let output = Output::from_resource(&output).unwrap();
-            if let Some(fullscreen) = output.user_data().get::<FullscreenSurface>() {
-                trace!("Unfullscreening: {:?}", fullscreen.get());
-                fullscreen.clear();
+            if let Some(fullscreen) = self.workspaces.current_workspace_mut().fullscreen.take() {
+                trace!("Unfullscreening: {:?}", fullscreen);
+                // trace!("Unfullscreening: {:?}", fullscreen.get());
+                // fullscreen.clear();
                 self.backend_data.reset_buffers(&output);
             }
         }
@@ -234,10 +314,13 @@ fn check_grab<BackendData: Backend + 'static>(
 }
 
 /// Should be called on `WlSurface::commit`
-pub fn handle_commit(popups: &mut PopupManager, space: &Space<WindowElement>, surface: &WlSurface) {
+pub fn handle_commit<'a>(
+    popups: &mut PopupManager,
+    mut windows: impl DoubleEndedIterator<Item = &'a WindowElement>,
+    surface: &WlSurface,
+) {
     // Handle toplevel commits.
-    if let Some(WindowElement::Wayland(ref window)) = space
-        .elements()
+    if let Some(WindowElement::Wayland(ref window)) = windows
         .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
         .cloned()
     {

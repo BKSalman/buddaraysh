@@ -13,6 +13,7 @@ use crate::{
     drawing::{PointerRenderElement, CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN},
     shell::FullscreenSurface,
     window::{WindowElement, WindowRenderElement},
+    workspace::Workspace,
 };
 
 smithay::backend::renderer::element::render_elements! {
@@ -129,10 +130,9 @@ impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug>
 #[profiling::function]
 pub fn output_elements<R>(
     output: &Output,
-    space: &Space<WindowElement>,
+    workspace: &Workspace,
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
     renderer: &mut R,
-    current_workspace_index: usize,
     // show_window_preview: bool,
 ) -> (
     Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
@@ -142,19 +142,7 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
 {
-    if let Some(window) =
-        output
-            .user_data()
-            .get::<FullscreenSurface>()
-            .and_then(|f| match f.get() {
-                (Some(window), Some(workspace_index))
-                    if workspace_index == current_workspace_index =>
-                {
-                    Some(window)
-                }
-                _ => None,
-            })
-    {
+    if let Some(window) = workspace.fullscreen.clone() {
         let scale = output.current_scale().fractional_scale().into();
         let window_render_elements: Vec<WindowRenderElement<R>> =
             AsRenderElements::<R>::render_elements(&window, renderer, (0, 0).into(), scale, 1.0);
@@ -181,7 +169,10 @@ where
 
         let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(
             renderer,
-            [space],
+            [
+                workspace.floating_layer.space(),
+                workspace.tiling_layer.space(),
+            ],
             output,
             1.0,
         )

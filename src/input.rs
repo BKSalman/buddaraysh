@@ -40,8 +40,13 @@ use smithay::{
 use tracing::{error, info};
 
 use crate::{
-    focus::FocusTarget, shell::FullscreenSurface, state::Buddaraysh, udev::UdevData,
-    window::WindowElement, winit::WinitData, Action, Backend, BTN_LEFT, BTN_RIGHT,
+    focus::FocusTarget,
+    shell::{layout::ManagedLayer, FullscreenSurface},
+    state::Buddaraysh,
+    udev::UdevData,
+    window::WindowElement,
+    winit::WinitData,
+    Action, Backend, BTN_LEFT, BTN_RIGHT,
 };
 
 impl<BackendData: Backend> Buddaraysh<BackendData> {
@@ -197,27 +202,10 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                     .is_none()
                 {
                     error!("workspace index does not exist");
+                    return;
                 }
-                let pointer = self.pointer.clone();
-                let now = Instant::now();
-                let time = now.duration_since(self.start_time).as_millis() as u32;
-                // this is to fix the button press being sent to the fullscreen
-                // surface when switching to another workspace
-                //
-                // but doesn't fix when switching back to the workspace with the
-                // fullscreen surface
-                pointer.motion(
-                    self,
-                    None,
-                    &MotionEvent {
-                        location: pointer.current_location(),
-                        serial: SERIAL_COUNTER.next_serial(),
-                        time,
-                    },
-                );
-                pointer.frame(self);
-
-                let target = self.surface_under(pointer.current_location());
+                // FIXME: should use local pointer location
+                let target = self.surface_under(self.pointer.current_location());
                 let keyboard = self.seat.get_keyboard().unwrap();
                 let serial = SERIAL_COUNTER.next_serial();
                 keyboard.set_focus(self, target.map(|(f, _)| f), serial);
@@ -248,17 +236,35 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                         .window_location(&window)
                         .unwrap();
 
-                    self.workspaces
+                    let managed_state = self
+                        .workspaces
                         .current_workspace_mut()
                         .unmap_window(&window);
 
-                    if let Some(workspace) = self.workspaces.get_mut(workspace_index) {
-                        workspace.map_window(window, location, true);
-                    } else {
-                        self.workspaces
-                            .current_workspace_mut()
-                            .map_window(window, location, false);
-                        error!("invalid workspace index");
+                    if let Some(managed_state) = managed_state {
+                        if let Some(workspace) = self.workspaces.get_mut(workspace_index) {
+                            match managed_state.layer {
+                                ManagedLayer::Tiling => {
+                                    workspace.tiling_layer.map_element(window);
+                                }
+                                ManagedLayer::Floating => {
+                                    workspace.floating_layer.map_element(window, location, true);
+                                }
+                            }
+                        } else {
+                            let workspace = self.workspaces.current_workspace_mut();
+                            match managed_state.layer {
+                                ManagedLayer::Tiling => {
+                                    workspace.tiling_layer.map_element(window);
+                                }
+                                ManagedLayer::Floating => {
+                                    workspace
+                                        .floating_layer
+                                        .map_element(window, location, false);
+                                }
+                            }
+                            error!("invalid workspace index");
+                        }
                     }
                 }
             }
@@ -833,17 +839,18 @@ impl Buddaraysh<UdevData> {
                             if let Some((FocusTarget::Window(window), _loc)) =
                                 self.surface_under(pointer.current_location())
                             {
+                                let pointer_location = pointer.current_location();
+                                let window_location = self
+                                    .workspaces
+                                    .current_workspace()
+                                    .window_location(&window)
+                                    .unwrap();
+                                let geometry = window.geometry();
+                                info!(?geometry, ?pointer_location, ?window_location);
                                 match window {
                                     WindowElement::Wayland(ref w) => {
                                         let seat = self.seat.clone();
                                         let toplevel = w.toplevel().clone();
-                                        let pointer_location = pointer.current_location();
-                                        let window_location = self
-                                            .workspaces
-                                            .current_workspace()
-                                            .window_location(&window)
-                                            .unwrap();
-                                        let geometry = window.geometry();
                                         let diff = pointer_location - window_location.to_f64();
                                         let half_width = (geometry.size.w / 2) as f64;
                                         let half_height = (geometry.size.h / 2) as f64;
@@ -897,13 +904,7 @@ impl Buddaraysh<UdevData> {
                                             location: pointer.current_location(),
                                         };
 
-                                        self.resize_request_x11(
-                                            edge,
-                                            w.clone(),
-                                            self.seat.clone(),
-                                            serial,
-                                            start_data,
-                                        );
+                                        self.resize_request_x11(edge, w, start_data);
                                     }
                                 }
                             }
@@ -1338,19 +1339,7 @@ impl Buddaraysh<UdevData> {
                     .current_workspace()
                     .output_geometry(output)
                     .unwrap();
-                if let Some(window) =
-                    output
-                        .user_data()
-                        .get::<FullscreenSurface>()
-                        .and_then(|f| match f.get() {
-                            (Some(window), Some(workspace_index))
-                                if workspace_index == self.workspaces.current_workspace_index() =>
-                            {
-                                Some(window)
-                            }
-                            _ => None,
-                        })
-                {
+                if let Some(window) = self.workspaces.current_workspace().fullscreen.clone() {
                     if let Some((_, _)) = window.surface_under(
                         self.pointer.current_location() - output_geo.loc.to_f64(),
                         WindowSurfaceType::ALL,

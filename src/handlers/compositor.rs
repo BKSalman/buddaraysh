@@ -6,6 +6,7 @@ use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     delegate_compositor, delegate_shm,
     desktop::{layer_map_for_output, PopupKind, PopupManager, Space, WindowSurfaceType},
+    output::Output,
     reexports::{
         calloop::Interest,
         wayland_server::{
@@ -81,6 +82,7 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
         X11Wm::commit_hook::<CalloopData<BackendData>>(surface);
 
         on_commit_buffer_handler::<Self>(surface);
+
         self.backend_data.early_import(surface);
 
         if !is_sync_subsurface(surface) {
@@ -89,24 +91,25 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
                 root = parent;
             }
 
-            if let Some(WindowElement::Wayland(w)) = self.window_for_surface(surface) {
-                w.on_commit();
+            if let Some(WindowElement::Wayland(window)) = self.window_for_surface(surface) {
+                window.on_commit();
             }
-        };
+        }
 
         ensure_initial_configure(
             surface,
-            self.workspaces.current_workspace().space(),
+            self.workspaces.current_workspace().windows(),
+            self.workspaces.current_workspace().outputs(),
             &mut self.popups,
         );
 
         shell::xdg::handle_commit(
             &mut self.popups,
-            self.workspaces.current_workspace().space(),
+            self.workspaces.current_workspace().windows(),
             surface,
         );
 
-        resize_grab::handle_commit(self.workspaces.current_workspace_mut().space_mut(), surface);
+        resize_grab::handle_commit(self.workspaces.current_workspace_mut(), surface);
     }
 }
 
@@ -129,9 +132,10 @@ delegate_shm!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 //     pub resize_state: ResizeState,
 // }
 
-fn ensure_initial_configure(
+fn ensure_initial_configure<'a>(
     surface: &WlSurface,
-    space: &Space<WindowElement>,
+    mut windows: impl DoubleEndedIterator<Item = &'a WindowElement>,
+    mut outputs: impl Iterator<Item = &'a Output>,
     popups: &mut PopupManager,
 ) {
     // TODO:
@@ -147,8 +151,7 @@ fn ensure_initial_configure(
     //     |_, _, _| true,
     // );
 
-    if let Some(window) = space
-        .elements()
+    if let Some(window) = windows
         .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
         .cloned()
     {
@@ -212,7 +215,7 @@ fn ensure_initial_configure(
         return;
     }
 
-    if let Some(output) = space.outputs().find(|o| {
+    if let Some(output) = outputs.find(|o| {
         let map = layer_map_for_output(o);
         map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
             .is_some()

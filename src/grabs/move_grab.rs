@@ -30,11 +30,30 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
 
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
-        data.workspaces.current_workspace_mut().map_window(
-            self.window.clone(),
-            new_location.to_i32_round(),
-            true,
-        );
+
+        if let Some(_old_location) = data
+            .workspaces
+            .current_workspace()
+            .floating_layer
+            .element_location(&self.window)
+            .as_ref()
+        {
+            data.workspaces
+                .current_workspace_mut()
+                .floating_layer
+                .map_element(self.window.clone(), new_location.to_i32_round(), true);
+        } else {
+            // TODO: swap tiled windows
+
+            // let workspace = data.workspaces.current_workspace_mut();
+            // workspace.tiling_layer.map_element(self.window);
+            // let output = workspace
+            //     .outputs_for_window(&self.window)
+            //     .iter()
+            //     .next()
+            //     .unwrap();
+            // workspace.tile_windows(output);
+        }
     }
 
     fn relative_motion(
