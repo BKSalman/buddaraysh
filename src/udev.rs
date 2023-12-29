@@ -1423,15 +1423,11 @@ impl Buddaraysh<UdevData> {
         screencopy: Option<Screencopy>,
     ) {
         profiling::scope!("render_surface", &format!("{crtc:?}"));
-        let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
-            device
-        } else {
+        let Some(device) = self.backend_data.backends.get_mut(&node) else {
             return;
         };
 
-        let surface = if let Some(surface) = device.surfaces.get_mut(&crtc) {
-            surface
-        } else {
+        let Some(surface) = device.surfaces.get_mut(&crtc) else {
             return;
         };
 
@@ -1490,15 +1486,13 @@ impl Buddaraysh<UdevData> {
                 texture
             });
 
-        let output = if let Some(output) = self.workspaces.outputs().find(|o| {
+        let Some(output) = self.workspaces.outputs().find(|o| {
             o.user_data().get::<UdevOutputId>()
                 == Some(&UdevOutputId {
                     device_id: surface.device_id,
                     crtc,
                 })
-        }) {
-            output.clone()
-        } else {
+        }) else {
             // somehow we got called with an invalid output
             return;
         };
@@ -1518,6 +1512,7 @@ impl Buddaraysh<UdevData> {
             screencopy,
             self.workspaces.current_workspace_index(),
         );
+
         let reschedule = match &result {
             Ok(has_rendered) => !has_rendered,
             Err(err) => {

@@ -198,7 +198,9 @@ impl WindowElement {
             WindowElement::Wayland(w) => w.toplevel().send_close(),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => {
-                let _ = w.close();
+                if let Err(err) = w.close() {
+                    tracing::warn!(?w, ?err, "Failed to close X11 window");
+                }
             }
         }
     }

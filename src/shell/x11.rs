@@ -57,7 +57,10 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        window.set_mapped(true).unwrap();
+        if let Err(err) = window.set_mapped(true) {
+            tracing::warn!(?window, ?err, "Failed to send Xwayland Mapped-Event");
+        }
+
         let window = WindowElement::X11(window);
         place_new_window(
             self.state.workspaces.current_workspace_mut().space_mut(),
@@ -74,11 +77,15 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         let WindowElement::X11(xsurface) = &window else {
             unreachable!()
         };
-        xsurface.configure(Some(bbox)).unwrap();
-        window.set_ssd(!xsurface.is_decorated());
+        if !xsurface.is_override_redirect() {
+            xsurface.configure(Some(bbox)).unwrap();
+            window.set_ssd(!xsurface.is_decorated());
+        }
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        self.state.override_redirect_windows.push(window.clone());
+
         let location = window.geometry().loc;
         let window = WindowElement::X11(window);
         self.state
@@ -99,14 +106,42 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
             self.state
                 .workspaces
                 .current_workspace_mut()
-                .unmap_window(&elem)
+                .unmap_window(&elem);
         }
-        if !window.is_override_redirect() {
+
+        if window.is_override_redirect() {
+            self.state
+                .override_redirect_windows
+                .retain(|or| or != &window);
+        } else {
             window.set_mapped(false).unwrap();
         }
     }
 
-    fn destroyed_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
+    fn destroyed_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        let maybe = self
+            .state
+            .workspaces
+            .current_workspace()
+            .windows()
+            .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
+            .cloned();
+        if let Some(win) = maybe {
+            tracing::debug!("removing x11 window from windows");
+            self.state
+                .workspaces
+                .current_workspace_mut()
+                .unmap_window(&win);
+        }
+
+        if window.is_override_redirect() {
+            self.state
+                .override_redirect_windows
+                .retain(|win| win != &window);
+        } else {
+            window.set_mapped(false).unwrap();
+        }
+    }
 
     fn configure_request(
         &mut self,
@@ -321,18 +356,27 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         }
     }
 
-    fn new_selection(&mut self, _xwm: XwmId, selection: SelectionTarget, mime_types: Vec<String>) {
+    fn new_selection(&mut self, xwm: XwmId, selection: SelectionTarget, mime_types: Vec<String>) {
         trace!(?selection, ?mime_types, "Got Selection from X11",);
-        // TODO check, that focused windows is X11 window before doing this
-        match selection {
-            SelectionTarget::Clipboard => set_data_device_selection(
-                &self.state.display_handle,
-                &self.state.seat,
-                mime_types,
-                (),
-            ),
-            SelectionTarget::Primary => {
-                set_primary_selection(&self.state.display_handle, &self.state.seat, mime_types, ())
+        if let Some(keyboard) = self.state.seat.get_keyboard() {
+            if let Some(FocusTarget::Window(WindowElement::X11(surface))) = keyboard.current_focus()
+            {
+                if surface.xwm_id().unwrap() == xwm {
+                    match selection {
+                        SelectionTarget::Clipboard => set_data_device_selection(
+                            &self.state.display_handle,
+                            &self.state.seat,
+                            mime_types,
+                            (),
+                        ),
+                        SelectionTarget::Primary => set_primary_selection(
+                            &self.state.display_handle,
+                            &self.state.seat,
+                            mime_types,
+                            (),
+                        ),
+                    }
+                }
             }
         }
     }

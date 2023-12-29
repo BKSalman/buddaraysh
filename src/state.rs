@@ -7,7 +7,7 @@ use std::{
 
 use smithay::{
     delegate_data_control, delegate_presentation, delegate_primary_selection,
-    desktop::{layer_map_for_output, PopupManager},
+    desktop::{layer_map_for_output, space::SpaceElement, PopupManager},
     input::{
         pointer::{CursorImageStatus, PointerHandle},
         Seat, SeatState,
@@ -42,6 +42,7 @@ use smithay::{
         socket::ListeningSocketSource,
         xdg_activation::XdgActivationState,
     },
+    xwayland::X11Surface,
 };
 
 #[cfg(feature = "xwayland")]
@@ -54,8 +55,8 @@ use smithay::{
 };
 
 use crate::{
-    cursor::Cursor, focus::FocusTarget, shell::FullscreenSurface, workspace::Workspaces, Backend,
-    CalloopData,
+    cursor::Cursor, focus::FocusTarget, shell::FullscreenSurface, window::WindowElement,
+    workspace::Workspaces, Backend, CalloopData,
 };
 
 pub struct Buddaraysh<BackendData: Backend + 'static> {
@@ -69,6 +70,7 @@ pub struct Buddaraysh<BackendData: Backend + 'static> {
     pub backend_data: BackendData,
 
     pub workspaces: Workspaces,
+    pub override_redirect_windows: Vec<X11Surface>,
     pub loop_signal: LoopSignal,
 
     // Smithay State
@@ -219,6 +221,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             display_handle,
 
             workspaces: Workspaces::default(),
+            override_redirect_windows: Vec::new(),
             loop_signal,
             socket_name,
 
@@ -320,7 +323,6 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             .unwrap();
         let layers = layer_map_for_output(output);
 
-        let mut under = None;
         if let Some(window) =
             output
                 .user_data()
@@ -334,25 +336,33 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
                     _ => None,
                 })
         {
-            under = Some((window.into(), output_geo.loc));
+            return Some((window.into(), output_geo.loc));
         } else if let Some(layer) = layers
             .layer_under(WlrLayer::Overlay, pos)
             .or_else(|| layers.layer_under(WlrLayer::Top, pos))
         {
             let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-            under = Some((layer.clone().into(), output_geo.loc + layer_loc))
+            return Some((layer.clone().into(), output_geo.loc + layer_loc));
+        } else if let Some(or) = self
+            .override_redirect_windows
+            .iter()
+            .find(|or| or.is_in_input_region(&pos))
+        {
+            let window = FocusTarget::Window(WindowElement::X11(or.clone()));
+            return Some((window, output_geo.loc + or.geometry().loc));
         } else if let Some((window, location)) =
             self.workspaces.current_workspace().window_under(pos)
         {
-            under = Some((window.clone().into(), location));
+            return Some((window.clone().into(), location));
         } else if let Some(layer) = layers
             .layer_under(WlrLayer::Bottom, pos)
             .or_else(|| layers.layer_under(WlrLayer::Background, pos))
         {
             let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-            under = Some((layer.clone().into(), output_geo.loc + layer_loc));
-        };
-        under
+            return Some((layer.clone().into(), output_geo.loc + layer_loc));
+        }
+
+        None
     }
 }
 
