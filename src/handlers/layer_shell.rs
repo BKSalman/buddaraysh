@@ -59,6 +59,11 @@ impl<BackendData: Backend + 'static> WlrLayerShellHandler for Buddaraysh<Backend
         }) {
             map.unmap_layer(&layer);
         }
+
+        for workspace in self.workspaces.workspaces_mut() {
+            workspace.refresh();
+            workspace.tile_windows();
+        }
     }
 }
 delegate_layer_shell!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);

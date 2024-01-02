@@ -59,6 +59,7 @@
     hyprpicker
     slurp
     grim
+    rofi-wayland
     waybar
     xorg.xcalc
     jq

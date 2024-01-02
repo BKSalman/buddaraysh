@@ -457,10 +457,9 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         })
     }
 
-    pub fn workspaceset_for(&self, window: &WindowElement) -> Option<(&Output, &WorkspaceSet)> {
-        self.workspaces.sets.iter().find(|workspaceset| {
+    pub fn workspaceset_for(&self, window: &WindowElement) -> Option<&WorkspaceSet> {
+        self.workspaces.workspacesets().find(|workspaceset| {
             workspaceset
-                .1
                 .workspaces()
                 .iter()
                 .find(|w| w.windows().any(|m| m == window))
@@ -468,15 +467,11 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         })
     }
 
-    pub fn workspaceset_for_mut(
-        &mut self,
-        window: &WindowElement,
-    ) -> Option<(&Output, &mut WorkspaceSet)> {
-        self.workspaces.sets.iter_mut().find(|workspaceset| {
+    pub fn workspaceset_for_mut(&mut self, window: &WindowElement) -> Option<&mut WorkspaceSet> {
+        self.workspaces.workspacesets_mut().find(|workspaceset| {
             workspaceset
-                .1
                 .workspaces()
-                .iter_mut()
+                .iter()
                 .find(|w| w.windows().any(|m| m == window))
                 .is_some()
         })

@@ -90,6 +90,14 @@ impl Workspaces {
 
         None
     }
+
+    pub fn workspacesets_mut(&mut self) -> impl Iterator<Item = &mut WorkspaceSet> {
+        self.sets.values_mut()
+    }
+
+    pub fn workspacesets(&self) -> impl Iterator<Item = &WorkspaceSet> {
+        self.sets.values()
+    }
 }
 
 pub struct WorkspaceSet {
@@ -195,6 +203,18 @@ impl WorkspaceSet {
     pub fn refresh(&mut self) {
         self.workspaces[self.current].refresh()
     }
+
+    pub fn workspace_for(&self, window: &WindowElement) -> Option<&Workspace> {
+        self.workspaces
+            .iter()
+            .find(|w| w.windows().any(|e| e == window))
+    }
+
+    pub fn workspace_for_mut(&mut self, window: &WindowElement) -> Option<&mut Workspace> {
+        self.workspaces
+            .iter_mut()
+            .find(|w| w.windows().any(|e| e == window))
+    }
 }
 
 #[derive(Debug)]
@@ -238,12 +258,6 @@ impl Workspace {
                 let _ = x11_surface.configure(new_geo);
             }
         }
-    }
-
-    pub fn output_geometry(&self, output: &Output) -> Option<Rectangle<i32, Logical>> {
-        self.floating_layer
-            .output_geometry(output)
-            .or_else(|| self.tiling_layer.output_geometry(output))
     }
 
     pub fn set_output(&mut self, output: &Output, location: impl Into<Point<i32, Logical>>) {
@@ -300,7 +314,7 @@ impl Workspace {
     pub fn window_bbox(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
         self.floating_layer
             .element_bbox(window)
-            .or_else(|| self.floating_layer.element_bbox(window))
+            .or_else(|| self.tiling_layer.element_bbox(window))
     }
 
     pub fn outputs_for_window(&self, window: &WindowElement) -> Vec<Output> {
@@ -315,17 +329,28 @@ impl Workspace {
 
     pub fn map_window(&mut self, window: WindowElement) {
         if layout::should_be_floating(&window) {
-            self.floating_layer
-                .map_element(window, Point::from((0, 0)), true);
+            let output_size = self.output.geometry().size;
+            let window_size = window.geometry().size;
+            self.floating_layer.map_element(
+                window,
+                Point::from((
+                    (output_size.w / 2) - (window_size.w / 2),
+                    (output_size.h / 2) - (window_size.h / 2),
+                )),
+                true,
+            );
         } else {
             self.tiling_layer.map_element(window);
-            self.tile_windows();
         }
     }
 
     pub fn unmap_window(&mut self, window: &WindowElement) -> Option<ManagedState> {
         let was_floating = self.floating_layer.unmap_element(window);
-        let was_tiled = self.floating_layer.unmap_element(window);
+        let was_tiled = self.tiling_layer.unmap_element(window);
+
+        if was_floating || was_tiled {
+            assert!(was_floating != was_tiled);
+        }
 
         if was_floating {
             Some(ManagedState {
@@ -399,8 +424,7 @@ impl Workspace {
             window.set_fullscreen(false);
             window.set_geometry(f.original_geometry);
 
-            self.floating_layer.refresh();
-            self.tiling_layer.refresh();
+            self.refresh();
             self.tile_windows();
 
             window.send_configure();

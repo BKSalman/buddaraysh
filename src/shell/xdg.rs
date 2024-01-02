@@ -57,6 +57,11 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
                 // );
             }
         }
+
+        for workspace in self.workspaces.workspaces_mut() {
+            workspace.refresh();
+            workspace.tile_windows();
+        }
     }
 
     fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
@@ -169,15 +174,6 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
         }
     }
 
-    fn maximize_request(&mut self, surface: ToplevelSurface) {
-        // TODO
-        surface.send_configure();
-    }
-
-    fn unmaximize_request(&mut self, surface: ToplevelSurface) {
-        // TODO
-    }
-
     fn fullscreen_request(&mut self, surface: ToplevelSurface, mut wl_output: Option<WlOutput>) {
         if surface
             .current_state()
@@ -270,7 +266,6 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
                 workspace.unmap_window(&window);
                 workspace.refresh();
                 workspace.tile_windows();
-                tracing::debug!("aloooo");
             }
         }
     }
