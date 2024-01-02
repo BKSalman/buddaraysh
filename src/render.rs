@@ -3,7 +3,7 @@ use smithay::{
         element::{surface::WaylandSurfaceRenderElement, AsRenderElements, RenderElement, Wrap},
         ImportAll, ImportMem, Renderer,
     },
-    desktop::space::{Space, SpaceRenderElements},
+    desktop::space::SpaceRenderElements,
     output::Output,
 };
 
@@ -11,7 +11,6 @@ use smithay::{
 use crate::drawing::FpsElement;
 use crate::{
     drawing::{PointerRenderElement, CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN},
-    shell::FullscreenSurface,
     window::{WindowElement, WindowRenderElement},
     workspace::Workspace,
 };
@@ -142,10 +141,16 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
 {
-    if let Some(window) = workspace.fullscreen.clone() {
+    if let Some(fullscreen) = &workspace.fullscreen {
         let scale = output.current_scale().fractional_scale().into();
         let window_render_elements: Vec<WindowRenderElement<R>> =
-            AsRenderElements::<R>::render_elements(&window, renderer, (0, 0).into(), scale, 1.0);
+            AsRenderElements::<R>::render_elements(
+                &fullscreen.window,
+                renderer,
+                (0, 0).into(),
+                scale,
+                1.0,
+            );
 
         let elements = custom_elements
             .into_iter()

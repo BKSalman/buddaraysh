@@ -275,34 +275,33 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
-                    let workspace = state.workspaces.current_workspace();
+                    for workspace in state.workspaces.workspaces_mut() {
+                        // let workspace = state.workspaces.current_workspace();
 
-                    smithay::desktop::space::render_output::<
-                        _,
-                        CustomRenderElements<GlesRenderer>,
-                        _,
-                        _,
-                    >(
-                        &output,
-                        renderer,
-                        1.0,
-                        0,
-                        [
-                            workspace.tiling_layer.space(),
-                            workspace.floating_layer.space(),
-                        ],
-                        &custom_elements,
-                        &mut state.backend_data.damage_tracker,
-                        [0.1, 0.1, 0.1, 1.0],
-                    )
-                    .unwrap();
-                    state.backend_data.backend.submit(Some(&[damage])).unwrap();
+                        if smithay::desktop::space::render_output::<
+                            _,
+                            CustomRenderElements<GlesRenderer>,
+                            _,
+                            _,
+                        >(
+                            &output,
+                            state.backend_data.backend.renderer(),
+                            1.0,
+                            0,
+                            [
+                                workspace.tiling_layer.space(),
+                                workspace.floating_layer.space(),
+                            ],
+                            &custom_elements,
+                            &mut state.backend_data.damage_tracker,
+                            [0.1, 0.1, 0.1, 1.0],
+                        )
+                        .is_ok()
+                        {
+                            state.backend_data.backend.submit(Some(&[damage])).unwrap();
+                        }
 
-                    state
-                        .workspaces
-                        .current_workspace()
-                        .windows()
-                        .for_each(|window| {
+                        workspace.windows().for_each(|window| {
                             window.send_frame(
                                 &output,
                                 state.start_time.elapsed(),
@@ -311,7 +310,8 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                             )
                         });
 
-                    state.workspaces.current_workspace_mut().refresh();
+                        workspace.refresh();
+                    }
                     state.popups.cleanup();
                     let _ = display.flush_clients();
 

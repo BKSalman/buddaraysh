@@ -15,6 +15,7 @@ use smithay::{
         pointer::{CursorImageStatus, PointerHandle},
         Seat, SeatState,
     },
+    output::Output,
     reexports::{
         calloop::{
             generic::Generic, EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction,
@@ -63,8 +64,8 @@ use smithay::{
 use crate::{
     cursor::Cursor,
     focus::FocusTarget,
-    shell::FullscreenSurface,
-    workspace::{WorkspaceSet, Workspaces},
+    window::WindowElement,
+    workspace::{Workspace, WorkspaceSet, Workspaces},
     Backend, CalloopData, OutputExt,
 };
 
@@ -237,7 +238,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             start_time,
             display_handle,
 
-            workspaces: Workspaces::default(),
+            workspaces: Workspaces::new(9),
             override_redirect_windows: Vec::new(),
             loop_signal,
             socket_name,
@@ -324,44 +325,29 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
     }
 
     pub fn surface_under(
-        &self,
         pos: Point<f64, Logical>,
+        output: &Output,
+        workspace: &Workspace,
+        override_redirect_windows: &[X11Surface],
     ) -> Option<(FocusTarget, Point<i32, Logical>)> {
-        let output = self.workspaces.outputs().find(|o| {
-            let geometry = self
-                .workspaces
-                .current_workspace()
-                .output_geometry(o)
-                .unwrap();
-            geometry.contains(pos.to_i32_round())
-        })?;
-        let output_geo = self
-            .workspaces
-            .current_workspace()
-            .output_geometry(output)
-            .unwrap();
+        let output_geo = output.geometry();
         let layers = layer_map_for_output(output);
 
-        let mut under = None;
-        // TODO: make a method to get output of workspace
-        if let Some(window) = self.workspaces.current_workspace().fullscreen.clone() {
-            under = Some((window.into(), output_geo.loc));
+        if let Some(window) = &workspace.fullscreen {
+            return Some((FocusTarget::Window(window.window.clone()), output_geo.loc));
         } else if let Some(layer) = layers
             .layer_under(WlrLayer::Overlay, pos)
             .or_else(|| layers.layer_under(WlrLayer::Top, pos))
         {
             let layer_loc = layers.layer_geometry(layer).unwrap().loc;
             return Some((layer.clone().into(), output_geo.loc + layer_loc));
-        } else if let Some(or) = self
-            .override_redirect_windows
+        } else if let Some(or) = override_redirect_windows
             .iter()
             .find(|or| or.is_in_input_region(&pos))
         {
             let window = FocusTarget::Window(WindowElement::X11(or.clone()));
             return Some((window, output_geo.loc + or.geometry().loc));
-        } else if let Some((window, location)) =
-            self.workspaces.current_workspace().window_under(pos)
-        {
+        } else if let Some((window, location)) = workspace.window_under(pos) {
             return Some((window.clone().into(), location));
         } else if let Some(layer) = layers
             .layer_under(WlrLayer::Bottom, pos)
@@ -374,18 +360,13 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         None
     }
 
-    /// the geometry of the output under the passed position
-    fn output_under_geometry(&self, pos: Point<f64, Logical>) -> Option<Rectangle<i32, Logical>> {
-        let output = self.workspaces.outputs().find(|o| {
-            let geometry = self
-                .workspaces
-                .current_workspace()
-                .output_geometry(o)
-                .unwrap();
-            geometry.contains(pos.to_i32_round())
-        })?;
+    pub fn output_under(&self, pos: Point<f64, Logical>) -> Option<Output> {
+        let output = self
+            .outputs()
+            .find(|output| output.geometry().to_f64().contains(pos))
+            .cloned()?;
 
-        self.workspaces.current_workspace().output_geometry(output)
+        Some(output)
     }
 
     pub fn outputs(&self) -> impl DoubleEndedIterator<Item = &smithay::output::Output> {
@@ -408,6 +389,101 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
                 },
             )
             .unwrap_or_default()
+    }
+
+    pub fn workspace_for_mut(&mut self, window: &WindowElement) -> Option<&mut Workspace> {
+        self.workspaces
+            .workspaces_mut()
+            .find(|workspace| workspace.windows().any(|m| m == window))
+    }
+
+    pub fn workspace_for(&mut self, window: &WindowElement) -> Option<&Workspace> {
+        self.workspaces
+            .workspaces()
+            .find(|workspace| workspace.windows().any(|m| m == window))
+    }
+
+    pub fn workspace_for_output_mut(&mut self, output: &Output) -> Option<&mut Workspace> {
+        // TODO: should I get the current workspace instead?
+        self.workspaces
+            .workspaces_mut()
+            .find(|workspace| workspace.output == *output)
+    }
+
+    pub fn current_workspace_for_output_mut(&mut self, output: &Output) -> Option<&mut Workspace> {
+        self.workspaces
+            .sets
+            .iter_mut()
+            .find(|workspaceset| {
+                workspaceset
+                    .1
+                    .workspaces()
+                    .iter_mut()
+                    .find(|w| w.output == *output)
+                    .is_some()
+            })
+            .map(|ws| ws.1.current_workspace_mut())
+    }
+
+    pub fn current_workspace_for_output(&self, output: &Output) -> Option<&Workspace> {
+        self.workspaces
+            .sets
+            .iter()
+            .find(|workspaceset| {
+                workspaceset
+                    .1
+                    .workspaces()
+                    .iter()
+                    .find(|w| w.output == *output)
+                    .is_some()
+            })
+            .map(|ws| ws.1.current_workspace())
+    }
+
+    pub fn workspace_for_output(&self, output: &Output) -> Option<&Workspace> {
+        self.workspaces
+            .workspaces()
+            .find(|workspace| workspace.output == *output)
+    }
+
+    pub fn workspaceset_for_output(&self, output: &Output) -> Option<(&Output, &WorkspaceSet)> {
+        self.workspaces.sets.iter().find(|workspaceset| {
+            workspaceset
+                .1
+                .workspaces()
+                .iter()
+                .find(|w| w.output == *output)
+                .is_some()
+        })
+    }
+
+    pub fn workspaceset_for(&self, window: &WindowElement) -> Option<(&Output, &WorkspaceSet)> {
+        self.workspaces.sets.iter().find(|workspaceset| {
+            workspaceset
+                .1
+                .workspaces()
+                .iter()
+                .find(|w| w.windows().any(|m| m == window))
+                .is_some()
+        })
+    }
+
+    pub fn workspaceset_for_mut(
+        &mut self,
+        window: &WindowElement,
+    ) -> Option<(&Output, &mut WorkspaceSet)> {
+        self.workspaces.sets.iter_mut().find(|workspaceset| {
+            workspaceset
+                .1
+                .workspaces()
+                .iter_mut()
+                .find(|w| w.windows().any(|m| m == window))
+                .is_some()
+        })
+    }
+
+    pub fn windows(&self) -> impl Iterator<Item = &WindowElement> {
+        self.workspaces.workspaces().flat_map(|w| w.windows())
     }
 }
 
@@ -440,12 +516,11 @@ impl ClientData for ClientState {
 #[cfg(feature = "xwayland")]
 impl<BackendData: Backend + 'static> XWaylandKeyboardGrabHandler for Buddaraysh<BackendData> {
     fn keyboard_focus_for_xsurface(&self, surface: &WlSurface) -> Option<FocusTarget> {
-        let elem = self
+        let element = self
             .workspaces
-            .current_workspace()
-            .windows()
-            .find(|elem| elem.wl_surface().as_ref() == Some(surface))?;
-        Some(FocusTarget::Window(elem.clone()))
+            .workspaces()
+            .find_map(|w| w.window_for_surface(surface))?;
+        Some(FocusTarget::Window(element.clone()))
     }
 }
 #[cfg(feature = "xwayland")]

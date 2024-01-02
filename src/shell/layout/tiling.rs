@@ -6,7 +6,7 @@ use smithay::{
     wayland::compositor,
 };
 
-use crate::{window::WindowElement, workspace::Workspace, Backend, Buddaraysh};
+use crate::{window::WindowElement, workspace::Workspace, Backend, Buddaraysh, OutputExt};
 
 #[derive(Default, Debug)]
 pub struct TilingLayout {
@@ -95,21 +95,19 @@ pub enum Layout {
 }
 
 impl Workspace {
-    pub fn tile_windows(&mut self, output: &Output) {
-        let Some(geo) = self.output_geometry(output).map(|op_geo| {
-            let map = layer_map_for_output(output);
-            if map.layers().peekable().peek().is_none() {
-                // INFO: Sometimes the exclusive zone is some weird number that doesn't match the
-                // |     output res, even when there are no layer surfaces mapped. In this case, we
-                // |     just return the output geometry.
-                op_geo
-            } else {
-                let zone = map.non_exclusive_zone();
-                tracing::debug!("non_exclusive_zone is {zone:?}");
-                Rectangle::from_loc_and_size(op_geo.loc + zone.loc, zone.size)
-            }
-        }) else {
-            return;
+    pub fn tile_windows(&mut self) {
+        let op_geo = self.output.geometry();
+        let output = self.output.clone();
+        let map = layer_map_for_output(&output);
+        let geo = if map.layers().peekable().peek().is_none() {
+            // INFO: Sometimes the exclusive zone is some weird number that doesn't match the
+            // |     output res, even when there are no layer surfaces mapped. In this case, we
+            // |     just return the output geometry.
+            op_geo
+        } else {
+            let zone = map.non_exclusive_zone();
+            tracing::debug!("non_exclusive_zone is {zone:?}");
+            Rectangle::from_loc_and_size(op_geo.loc + zone.loc, zone.size)
         };
 
         match self.tiling_layer.layout {
@@ -139,7 +137,8 @@ impl Workspace {
                     let size: smithay::utils::Size<i32, smithay::utils::Logical> =
                         (geo.size.w / 2, geo.size.h).into();
                     let master_geo = Rectangle::from_loc_and_size(loc, size);
-                    master.change_geometry(master_geo);
+                    master.set_geometry(master_geo);
+                    master.send_configure();
                     tracing::info!("master geo: {master_geo:#?}");
                     self.tiling_layer.space.map_element(master, loc, true);
 
@@ -154,7 +153,8 @@ impl Workspace {
                                 stack_window_height.max(40 /* minimum tiled window height*/),
                             )),
                         );
-                        stack_window.change_geometry(stack_window_geo);
+                        stack_window.set_geometry(stack_window_geo);
+                        stack_window.send_configure();
                         self.tiling_layer.space.map_element(
                             stack_window,
                             stack_window_geo.loc,
@@ -162,7 +162,8 @@ impl Workspace {
                         );
                     }
                 } else {
-                    master.change_geometry(geo);
+                    master.set_geometry(geo);
+                    master.send_configure();
                     self.tiling_layer.space.map_element(master, geo.loc, true);
                 }
             }

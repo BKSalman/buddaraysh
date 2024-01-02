@@ -5,7 +5,7 @@ use crate::{
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     delegate_compositor, delegate_shm,
-    desktop::{layer_map_for_output, PopupKind, PopupManager, Space, WindowSurfaceType},
+    desktop::{layer_map_for_output, PopupKind, PopupManager, WindowSurfaceType},
     output::Output,
     reexports::{
         calloop::Interest,
@@ -95,21 +95,22 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
                 window.on_commit();
             }
         }
+        let window = self
+            .windows()
+            .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
+            .cloned();
 
-        ensure_initial_configure(
-            surface,
-            self.workspaces.current_workspace().windows(),
-            self.workspaces.current_workspace().outputs(),
-            &mut self.popups,
-        );
+        let outputs = self.outputs().cloned().collect::<Vec<_>>();
 
-        shell::xdg::handle_commit(
-            &mut self.popups,
-            self.workspaces.current_workspace().windows(),
-            surface,
-        );
+        ensure_initial_configure(surface, window.as_ref(), outputs.iter(), &mut self.popups);
 
-        resize_grab::handle_commit(self.workspaces.current_workspace_mut(), surface);
+        shell::xdg::handle_commit(&mut self.popups, window.as_ref(), surface);
+
+        if let Some(window) = self.window_for_surface(surface) {
+            if let Some(workspace) = self.workspace_for_mut(&window) {
+                resize_grab::handle_commit(workspace, surface);
+            }
+        }
     }
 }
 
@@ -134,7 +135,7 @@ delegate_shm!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 
 fn ensure_initial_configure<'a>(
     surface: &WlSurface,
-    mut windows: impl DoubleEndedIterator<Item = &'a WindowElement>,
+    window: Option<&'a WindowElement>,
     mut outputs: impl Iterator<Item = &'a Output>,
     popups: &mut PopupManager,
 ) {
@@ -151,10 +152,7 @@ fn ensure_initial_configure<'a>(
     //     |_, _, _| true,
     // );
 
-    if let Some(window) = windows
-        .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
-        .cloned()
-    {
+    if let Some(window) = window {
         // send the initial configure if relevant
         #[cfg_attr(not(feature = "xwayland"), allow(irrefutable_let_patterns))]
         if let WindowElement::Wayland(ref toplevel) = window {
