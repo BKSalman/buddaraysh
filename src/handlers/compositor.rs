@@ -5,7 +5,7 @@ use crate::{
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     delegate_compositor, delegate_shm,
-    desktop::{layer_map_for_output, PopupKind, PopupManager, WindowSurfaceType},
+    desktop::{layer_map_for_output, PopupKind, WindowSurfaceType},
     output::Output,
     reexports::{
         calloop::Interest,
@@ -102,7 +102,7 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
 
         let outputs = self.outputs().cloned().collect::<Vec<_>>();
 
-        ensure_initial_configure(surface, window.as_ref(), outputs.iter(), &mut self.popups);
+        self.ensure_initial_configure(surface, window.as_ref(), outputs.iter());
 
         shell::xdg::handle_commit(&mut self.popups, window.as_ref(), surface);
 
@@ -113,6 +113,7 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
         }
     }
 }
+delegate_compositor!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 
 impl<BackendData: Backend + 'static> BufferHandler for Buddaraysh<BackendData> {
     fn buffer_destroyed(&mut self, _buffer: &wl_buffer::WlBuffer) {}
@@ -124,7 +125,6 @@ impl<BackendData: Backend + 'static> ShmHandler for Buddaraysh<BackendData> {
     }
 }
 
-delegate_compositor!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 delegate_shm!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 
 // #[derive(Default)]
@@ -133,113 +133,121 @@ delegate_shm!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 //     pub resize_state: ResizeState,
 // }
 
-fn ensure_initial_configure<'a>(
-    surface: &WlSurface,
-    window: Option<&'a WindowElement>,
-    mut outputs: impl Iterator<Item = &'a Output>,
-    popups: &mut PopupManager,
-) {
-    // TODO:
-    // with_surface_tree_upward(
-    //     surface,
-    //     (),
-    //     |_, _, _| TraversalAction::DoChildren(()),
-    //     |_, states, _| {
-    //         states
-    //             .data_map
-    //             .insert_if_missing(|| RefCell::new(SurfaceData::default()));
-    //     },
-    //     |_, _, _| true,
-    // );
+impl<BackendData: Backend> Buddaraysh<BackendData> {
+    fn ensure_initial_configure<'a>(
+        &mut self,
+        surface: &WlSurface,
+        window: Option<&'a WindowElement>,
+        mut outputs: impl Iterator<Item = &'a Output>,
+    ) {
+        // TODO:
+        // with_surface_tree_upward(
+        //     surface,
+        //     (),
+        //     |_, _, _| TraversalAction::DoChildren(()),
+        //     |_, states, _| {
+        //         states
+        //             .data_map
+        //             .insert_if_missing(|| RefCell::new(SurfaceData::default()));
+        //     },
+        //     |_, _, _| true,
+        // );
 
-    if let Some(window) = window {
-        // send the initial configure if relevant
-        #[cfg_attr(not(feature = "xwayland"), allow(irrefutable_let_patterns))]
-        if let WindowElement::Wayland(ref toplevel) = window {
+        if let Some(window) = window {
+            // send the initial configure if relevant
+            #[cfg_attr(not(feature = "xwayland"), allow(irrefutable_let_patterns))]
+            if let WindowElement::Wayland(ref toplevel) = window {
+                let initial_configure_sent = with_states(surface, |states| {
+                    states
+                        .data_map
+                        .get::<XdgToplevelSurfaceData>()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .initial_configure_sent
+                });
+                if !initial_configure_sent {
+                    toplevel.toplevel().send_configure();
+                }
+            }
+
+            // with_states(surface, |states| {
+            //     let mut data = states
+            //         .data_map
+            //         .get::<RefCell<SurfaceData>>()
+            //         .unwrap()
+            //         .borrow_mut();
+
+            //     // Finish resizing.
+            //     if let ResizeState::WaitingForCommit(_) = data.resize_state {
+            //         data.resize_state = ResizeState::NotResizing;
+            //     }
+            // });
+
+            return;
+        }
+
+        if let Some(popup) = self.popups.find_popup(surface) {
+            let popup = match popup {
+                PopupKind::Xdg(ref popup) => popup,
+                // Doesn't require configure
+                PopupKind::InputMethod(ref _input_popup) => {
+                    return;
+                }
+            };
+
             let initial_configure_sent = with_states(surface, |states| {
                 states
                     .data_map
-                    .get::<XdgToplevelSurfaceData>()
+                    .get::<XdgPopupSurfaceData>()
                     .unwrap()
                     .lock()
                     .unwrap()
                     .initial_configure_sent
             });
             if !initial_configure_sent {
-                toplevel.toplevel().send_configure();
+                // NOTE: This should never fail as the initial configure is always
+                // allowed.
+                popup.send_configure().expect("initial configure failed");
             }
+
+            return;
         }
 
-        // with_states(surface, |states| {
-        //     let mut data = states
-        //         .data_map
-        //         .get::<RefCell<SurfaceData>>()
-        //         .unwrap()
-        //         .borrow_mut();
+        if let Some(output) = outputs.find(|o| {
+            let map = layer_map_for_output(o);
+            map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+                .is_some()
+        }) {
+            let initial_configure_sent = with_states(surface, |states| {
+                states
+                    .data_map
+                    .get::<LayerSurfaceData>()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .initial_configure_sent
+            });
 
-        //     // Finish resizing.
-        //     if let ResizeState::WaitingForCommit(_) = data.resize_state {
-        //         data.resize_state = ResizeState::NotResizing;
-        //     }
-        // });
+            let mut map = layer_map_for_output(output);
 
-        return;
-    }
+            // arrange the layers before sending the initial configure
+            // to respect any size the client may have sent
+            let changed = map.arrange();
+            // send the initial configure if relevant
+            if !initial_configure_sent {
+                let layer = map
+                    .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+                    .unwrap();
 
-    if let Some(popup) = popups.find_popup(surface) {
-        let popup = match popup {
-            PopupKind::Xdg(ref popup) => popup,
-            // Doesn't require configure
-            PopupKind::InputMethod(ref _input_popup) => {
-                return;
+                layer.layer_surface().send_configure();
             }
-        };
-
-        let initial_configure_sent = with_states(surface, |states| {
-            states
-                .data_map
-                .get::<XdgPopupSurfaceData>()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .initial_configure_sent
-        });
-        if !initial_configure_sent {
-            // NOTE: This should never fail as the initial configure is always
-            // allowed.
-            popup.send_configure().expect("initial configure failed");
-        }
-
-        return;
-    }
-
-    if let Some(output) = outputs.find(|o| {
-        let map = layer_map_for_output(o);
-        map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
-            .is_some()
-    }) {
-        let initial_configure_sent = with_states(surface, |states| {
-            states
-                .data_map
-                .get::<LayerSurfaceData>()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .initial_configure_sent
-        });
-
-        let mut map = layer_map_for_output(output);
-
-        // arrange the layers before sending the initial configure
-        // to respect any size the client may have sent
-        map.arrange();
-        // send the initial configure if relevant
-        if !initial_configure_sent {
-            let layer = map
-                .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
-                .unwrap();
-
-            layer.layer_surface().send_configure();
+            drop(map);
+            if changed {
+                for workspace in self.workspaces.workspaces_mut() {
+                    workspace.tile_windows();
+                }
+            }
         }
     }
 }

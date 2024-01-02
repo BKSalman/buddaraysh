@@ -217,18 +217,6 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 }
             }
             Action::MoveToWorkspace(workspace_index) => {
-                let pointer_location = self.pointer.current_location();
-                let Some(output) = self.output_under(pointer_location) else {
-                    return;
-                };
-                let Some(workspace) = self.workspace_for_output(&output) else {
-                    return;
-                };
-
-                if workspace.handle == workspace_index {
-                    return;
-                }
-
                 if workspace_index > self.workspaces.amount {
                     return;
                 }
@@ -248,11 +236,12 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                     .and_then(|t| t.wl_surface())
                     .and_then(|s| self.window_for_surface(&s))
                 {
-                    let Some((_output, workspaceset)) = self.workspaceset_for_mut(&window) else {
+                    let Some(workspaceset) = self.workspaceset_for_mut(&window) else {
                         return;
                     };
-
-                    let workspace = workspaceset.current_workspace_mut();
+                    let Some(workspace) = workspaceset.workspace_for_mut(&window) else {
+                        return;
+                    };
 
                     let location = workspace.window_location(&window).unwrap();
 
@@ -265,7 +254,10 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                         match managed_state.layer {
                             ManagedLayer::Tiling => {
                                 workspace.tiling_layer.map_element(window);
-                                workspace.tile_windows();
+                                for workspace in self.workspaces.workspaces_mut() {
+                                    workspace.refresh();
+                                    workspace.tile_windows();
+                                }
                             }
                             ManagedLayer::Floating => {
                                 workspace.floating_layer.map_element(window, location, true);

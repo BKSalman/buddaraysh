@@ -3,3 +3,4 @@ myimage.img
 .nixos-vm/result
 .nixos-vm/buddaraysh.qcow2
 result
+.direnv

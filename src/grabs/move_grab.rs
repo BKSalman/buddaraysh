@@ -31,25 +31,19 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
 
-        let Some(output) = data.output_under(new_location) else {
+        let Some(workspace) = data.workspace_for_mut(&self.window) else {
             return;
         };
 
-        let Some(workspace) = data.workspace_for_output_mut(&output) else {
-            return;
-        };
-
-        if let Some(_old_location) = workspace
-            .floating_layer
-            .element_location(&self.window)
-            .as_ref()
-        {
+        if !workspace.is_tiled(&self.window) {
             workspace.floating_layer.map_element(
                 self.window.clone(),
                 new_location.to_i32_round(),
                 true,
             );
         } else {
+            tracing::info!("lmao");
+            handle.unset_grab(data, event.serial, event.time, true);
             // TODO: swap tiled windows
 
             // let workspace = data.workspaces.current_workspace_mut();

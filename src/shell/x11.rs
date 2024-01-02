@@ -53,7 +53,9 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
     fn map_window_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        surface.set_mapped(true).unwrap();
+        if !surface.is_override_redirect() {
+            surface.set_mapped(true).unwrap();
+        }
         let window = WindowElement::X11(surface);
         if let Some(output) = self
             .state
@@ -62,10 +64,13 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
             let location = self.state.pointer.current_location();
             if let Some(workspace) = self.state.workspace_for_output_mut(&output) {
                 workspace.map_window(window.clone());
-                let bbox = workspace.window_bbox(&window).unwrap();
-                window.set_geometry(bbox);
                 window.set_ssd(!window.is_decorated(false));
             }
+        }
+
+        for workspace in self.state.workspaces.workspaces_mut() {
+            workspace.refresh();
+            workspace.tile_windows();
         }
         // place_new_window(
         //     self.state.workspaces.current_workspace_mut().space_mut(),
@@ -149,10 +154,10 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         geometry: Rectangle<i32, Logical>,
         _above: Option<u32>,
     ) {
-        let window = WindowElement::X11(surface);
-        if let Some(workspace) = self.state.workspace_for_mut(&window) {
-            workspace.map_window(window);
-        }
+        // let window = WindowElement::X11(surface);
+        // if let Some(workspace) = self.state.workspace_for_mut(&window) {
+        //     workspace.map_window(window);
+        // }
         // TODO: We don't properly handle the order of override-redirect windows here,
         //       they are always mapped top and then never reordered.
     }

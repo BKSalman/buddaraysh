@@ -123,27 +123,32 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
             new_window_height.clamp(min_height, max_height),
         ));
 
-        if let Some(workspace) = data.workspace_for(&self.window) {
-            if !workspace.is_tiled(&self.window) {
-                match &self.window {
-                    WindowElement::Wayland(w) => {
-                        let xdg = w.toplevel();
-                        xdg.with_pending_state(|state| {
-                            state.states.set(xdg_toplevel::State::Resizing);
-                            state.size = Some(self.last_window_size);
-                        });
-                        xdg.send_pending_configure();
-                    }
-                    #[cfg(feature = "xwayland")]
-                    WindowElement::X11(x11) => {
-                        x11.configure(Rectangle::from_loc_and_size(
-                            x11.geometry().loc,
-                            self.last_window_size,
-                        ))
-                        .unwrap();
-                    }
+        let Some(workspace) = data.workspace_for(&self.window) else {
+            return;
+        };
+
+        if !workspace.is_tiled(&self.window) {
+            match &self.window {
+                WindowElement::Wayland(w) => {
+                    let xdg = w.toplevel();
+                    xdg.with_pending_state(|state| {
+                        state.states.set(xdg_toplevel::State::Resizing);
+                        state.size = Some(self.last_window_size);
+                    });
+                    xdg.send_pending_configure();
+                }
+                #[cfg(feature = "xwayland")]
+                WindowElement::X11(x11) => {
+                    x11.configure(Rectangle::from_loc_and_size(
+                        x11.geometry().loc,
+                        self.last_window_size,
+                    ))
+                    .expect("configure");
                 }
             }
+        } else {
+            tracing::info!("lmao");
+            handle.unset_grab(data, event.serial, event.time, true);
         }
     }
 
@@ -199,9 +204,9 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
                         x11.geometry().loc,
                         self.last_window_size,
                     ))
-                    .unwrap();
+                    .expect("configure");
 
-                    let Some(surface) = self.window.wl_surface() else {
+                    let Some(surface) = x11.wl_surface() else {
                         // X11 Window got unmapped, abort
                         return;
                     };
@@ -405,7 +410,7 @@ pub fn handle_commit(workspace: &mut Workspace, surface: &WlSurface) -> Option<(
     if new_loc.x.is_some() || new_loc.y.is_some() {
         // If TOP or LEFT side of the window got resized, we have to move it
         // TODO: add tiling resizing
-        if let Some(_old_location) = workspace.floating_layer.element_location(&window) {
+        if !workspace.is_tiled(&window) {
             workspace
                 .floating_layer
                 .map_element(window, window_loc, false);

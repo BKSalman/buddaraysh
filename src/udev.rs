@@ -1729,7 +1729,7 @@ fn render_surface<'a, 'b, 'c>(
     clock: &Clock<Monotonic>,
     screencopy: Option<Screencopy>,
 ) -> Result<bool, SwapBuffersError> {
-    let output_geometry = workspace.output_geometry(output).unwrap();
+    let output_geometry = output.geometry();
     let scale = Scale::from(output.current_scale().fractional_scale());
 
     let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();

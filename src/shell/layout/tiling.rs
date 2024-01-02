@@ -3,10 +3,9 @@ use smithay::{
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, Rectangle},
-    wayland::compositor,
 };
 
-use crate::{window::WindowElement, workspace::Workspace, Backend, Buddaraysh, OutputExt};
+use crate::{window::WindowElement, workspace::Workspace, OutputExt};
 
 #[derive(Default, Debug)]
 pub struct TilingLayout {
@@ -58,10 +57,10 @@ impl TilingLayout {
     }
 
     pub fn unmap_element(&mut self, window: &WindowElement) -> bool {
-        let was_mapped = self.space.elements().any(|e| e == window);
-        self.space.unmap_elem(window);
+        let was_unmaped = self.space.elements().any(|e| e == window);
+        self.space.unmap_elem(&window);
 
-        was_mapped
+        was_unmaped
     }
 
     pub fn output_under(
@@ -98,7 +97,7 @@ impl Workspace {
     pub fn tile_windows(&mut self) {
         let op_geo = self.output.geometry();
         let output = self.output.clone();
-        let map = layer_map_for_output(&output);
+        let mut map = layer_map_for_output(&output);
         let geo = if map.layers().peekable().peek().is_none() {
             // INFO: Sometimes the exclusive zone is some weird number that doesn't match the
             // |     output res, even when there are no layer surfaces mapped. In this case, we
@@ -106,13 +105,13 @@ impl Workspace {
             op_geo
         } else {
             let zone = map.non_exclusive_zone();
-            tracing::debug!("non_exclusive_zone is {zone:?}");
+            map.cleanup();
             Rectangle::from_loc_and_size(op_geo.loc + zone.loc, zone.size)
         };
 
         match self.tiling_layer.layout {
             Layout::MasterStack => {
-                let windows = self.windows().cloned().collect::<Vec<_>>();
+                let windows = self.tiling_layer.elements().cloned().collect::<Vec<_>>();
 
                 if windows.is_empty() {
                     return;
@@ -123,14 +122,7 @@ impl Workspace {
                 let Some(master) = windows.next() else {
                     return;
                 };
-                tracing::info!(
-                    "{}, {}, {}",
-                    stack_windows_count,
-                    master.title(),
-                    master.app_id()
-                );
 
-                tracing::info!(?stack_windows_count);
                 if stack_windows_count > 0 {
                     // half width
                     let loc = geo.loc;
@@ -139,7 +131,6 @@ impl Workspace {
                     let master_geo = Rectangle::from_loc_and_size(loc, size);
                     master.set_geometry(master_geo);
                     master.send_configure();
-                    tracing::info!("master geo: {master_geo:#?}");
                     self.tiling_layer.space.map_element(master, loc, true);
 
                     let stack_window_height = size.h / stack_windows_count as i32;
@@ -147,7 +138,10 @@ impl Workspace {
                     for (i, stack_window) in windows.enumerate() {
                         // half height with each window
                         let stack_window_geo = Rectangle::from_loc_and_size(
-                            smithay::utils::Point::from((size.w, stack_window_height * i as i32)),
+                            smithay::utils::Point::from((
+                                size.w,
+                                geo.loc.y + stack_window_height * i as i32,
+                            )),
                             smithay::utils::Size::from((
                                 size.w,
                                 stack_window_height.max(40 /* minimum tiled window height*/),
@@ -170,5 +164,5 @@ impl Workspace {
         }
     }
 
-    fn update_windows(&self, output: &Output) {}
+    // fn update_windows(&self, output: &Output) {}
 }
