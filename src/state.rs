@@ -6,7 +6,8 @@ use std::{
 };
 
 use smithay::{
-    delegate_data_control, delegate_presentation, delegate_primary_selection,
+    delegate_data_control, delegate_pointer_gestures, delegate_presentation,
+    delegate_primary_selection, delegate_relative_pointer,
     desktop::{layer_map_for_output, space::SpaceElement, PopupManager},
     input::{
         pointer::{CursorImageStatus, PointerHandle},
@@ -27,7 +28,10 @@ use smithay::{
         compositor::{CompositorClientState, CompositorState},
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
         output::OutputManagerState,
+        pointer_constraints::PointerConstraintsState,
+        pointer_gestures::PointerGesturesState,
         presentation::PresentationState,
+        relative_pointer::RelativePointerManagerState,
         selection::{
             data_device::{DataDeviceHandler, DataDeviceState},
             primary_selection::{PrimarySelectionHandler, PrimarySelectionState},
@@ -134,6 +138,9 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         let presentation_state = PresentationState::new::<Self>(&display_handle, clock.id() as u32);
         let keyboard_shortcuts_inhibit_state =
             KeyboardShortcutsInhibitState::new::<Self>(&display_handle);
+        PointerConstraintsState::new::<Self>(&display_handle);
+        RelativePointerManagerState::new::<Self>(&display_handle);
+        PointerGesturesState::new::<Self>(&display_handle);
 
         // A seat is a group of keyboards, pointer and touch devices.
         // A seat typically has a pointer and maintains a keyboard focus and a pointer focus.
@@ -373,8 +380,6 @@ impl<BackendData: Backend> PrimarySelectionHandler for Buddaraysh<BackendData> {
 }
 delegate_primary_selection!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
 
-delegate_presentation!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
-
 impl<BackendData: Backend> DataControlHandler for Buddaraysh<BackendData> {
     fn data_control_state(
         &self,
@@ -455,3 +460,7 @@ impl<BackendData: Backend + 'static> DataDeviceHandler for Buddaraysh<BackendDat
         &self.data_device_state
     }
 }
+
+delegate_pointer_gestures!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
+delegate_presentation!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
+delegate_relative_pointer!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);

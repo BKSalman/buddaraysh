@@ -1,6 +1,7 @@
 mod compositor;
 mod keyboard_shortcuts_inhibit;
 mod layer_shell;
+mod pointer_contraints;
 
 use crate::focus::FocusTarget;
 use crate::{Backend, Buddaraysh};
