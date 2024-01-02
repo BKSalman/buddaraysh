@@ -37,13 +37,10 @@ use tracing::{debug, trace};
 use crate::{
     focus::FocusTarget,
     grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
-    shell::FullscreenSurface,
-    ssd::HEADER_BAR_HEIGHT,
+    shell::{layout::ManagedLayer, FullscreenSurface},
     window::WindowElement,
-    Backend, Buddaraysh,
+    Backend, Buddaraysh, OutputExt,
 };
-
-use super::{fullscreen_output_geometry, place_new_window};
 
 impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData> {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -52,15 +49,17 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let window = WindowElement::Wayland(Window::new(surface));
-        self.workspaces
-            .current_workspace_mut()
-            .map_window(window, self.pointer.current_location());
-        // place_new_window(
-        //     self.workspaces.current_workspace_mut().space_mut(),
-        //     self.pointer.current_location(),
-        //     &window,
-        //     true,
-        // );
+        if let Some(output) = self.output_under(self.pointer.current_location()) {
+            if let Some(workspace) = self.current_workspace_for_output_mut(&output) {
+                workspace.map_window(window);
+                // place_new_window(
+                //     self.workspaces.current_workspace_mut().space_mut(),
+                //     self.pointer.current_location(),
+                //     &window,
+                //     true,
+                // );
+            }
+        }
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
@@ -82,18 +81,11 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
             // window position and output constraints into account.
             let cursor_location = self.pointer.current_location();
             let output = self
-                .workspaces
-                .current_workspace()
                 .output_under(cursor_location)
-                .next()
-                .or(self.workspaces.current_workspace().outputs().next())
+                .or_else(|| self.outputs().next().cloned())
                 .unwrap();
 
-            let output_geometry = self
-                .workspaces
-                .current_workspace()
-                .output_geometry(output)
-                .unwrap();
+            let output_geometry = output.geometry();
 
             let geometry = positioner.get_geometry();
 
@@ -135,15 +127,10 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
         let seat: Seat<Buddaraysh<BackendData>> = Seat::from_resource(&seat).unwrap();
         let kind = PopupKind::Xdg(surface);
         if let Some(root) = find_popup_root_surface(&kind).ok().and_then(|root| {
-            self.workspaces
-                .current_workspace()
-                .windows()
-                .find(|w| w.wl_surface().map(|s| s == root).unwrap_or(false))
-                .cloned()
+            self.window_for_surface(&root)
                 .map(FocusTarget::Window)
                 .or_else(|| {
-                    self.workspaces
-                        .outputs()
+                    self.outputs()
                         .find_map(|o| {
                             let map = layer_map_for_output(o);
                             map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)
@@ -201,53 +188,47 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
             // independently from its buffer size
             let wl_surface = surface.wl_surface();
 
-            let output_geometry = fullscreen_output_geometry(
-                wl_surface,
-                wl_output.as_ref(),
-                self.workspaces.current_workspace_mut(),
-            );
+            let output = wl_output
+                .as_ref()
+                .and_then(Output::from_resource)
+                .unwrap_or_else(|| self.outputs().next().unwrap().clone());
 
-            let fullscreen = output_geometry.map(|geometry| {
-                let output = wl_output
-                    .as_ref()
-                    .and_then(Output::from_resource)
-                    .unwrap_or_else(|| self.workspaces.outputs().next().unwrap().clone());
-                let client = self.display_handle.get_client(wl_surface.id()).unwrap();
-                for output in output.client_outputs(&client) {
-                    wl_output = Some(output);
-                }
-                let window = self
-                    .workspaces
-                    .current_workspace()
-                    .windows()
-                    .find(|window| {
-                        window
-                            .wl_surface()
-                            .map(|s| s == *wl_surface)
-                            .unwrap_or(false)
-                    })
-                    .unwrap();
+            // let output_geometry = fullscreen_output_geometry(
+            //     wl_surface,
+            //     wl_output.as_ref(),
+            //     self.workspaces.current_workspace_mut(),
+            // );
 
-                surface.with_pending_state(|state| {
-                    state.states.set(xdg_toplevel::State::Fullscreen);
-                    state.size = Some(geometry.size);
-                    state.fullscreen_output = wl_output;
-                });
-                output
-                    .user_data()
-                    .insert_if_missing(FullscreenSurface::default);
-                output
-                    .user_data()
-                    .get::<FullscreenSurface>()
-                    .unwrap()
-                    .set(window.clone(), self.workspaces.current_workspace_index());
-                trace!("Fullscreening: {:?}", window);
-                window.clone()
-            });
-
-            if let Some(fullscreen) = fullscreen {
-                self.workspaces.current_workspace_mut().fullscreen = Some(fullscreen);
+            let Some(workspace) = self.workspace_for_output(&output) else {
+                return;
+            };
+            let output_geometry = output.geometry();
+            let client = self.display_handle.get_client(wl_surface.id()).unwrap();
+            for output in output.client_outputs(&client) {
+                wl_output = Some(output);
             }
+            let window = self.window_for_surface(wl_surface).unwrap();
+
+            surface.with_pending_state(|state| {
+                state.states.set(xdg_toplevel::State::Fullscreen);
+                state.size = Some(output_geometry.size);
+                state.fullscreen_output = wl_output;
+            });
+            let layer = if workspace.is_tiled(&window) {
+                ManagedLayer::Tiling
+            } else {
+                ManagedLayer::Floating
+            };
+            trace!("Fullscreening: {:?}", window);
+
+            let Some(workspace) = self.workspace_for_output_mut(&output) else {
+                return;
+            };
+            workspace.fullscreen = Some(FullscreenSurface {
+                window: window.clone(),
+                previously: Some((layer, workspace.handle)),
+                original_geometry: window.geometry(),
+            });
         }
 
         // The protocol demands us to always reply with a configure,
@@ -264,7 +245,6 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
             return;
         }
 
-        // TODO: make method to get output of fullscreen, and fullscreen of output
         let ret = surface.with_pending_state(|state| {
             state.states.unset(xdg_toplevel::State::Fullscreen);
             state.size = None;
@@ -272,15 +252,26 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
         });
         if let Some(output) = ret {
             let output = Output::from_resource(&output).unwrap();
-            if let Some(fullscreen) = self.workspaces.current_workspace_mut().fullscreen.take() {
-                trace!("Unfullscreening: {:?}", fullscreen);
-                // trace!("Unfullscreening: {:?}", fullscreen.get());
-                // fullscreen.clear();
-                self.backend_data.reset_buffers(&output);
+            if let Some(workspace) = self.workspace_for_output_mut(&output) {
+                if let Some(fullscreen) = workspace.fullscreen.take() {
+                    trace!("Unfullscreening: {:?}", fullscreen);
+                    self.backend_data.reset_buffers(&output);
+                }
             }
         }
 
         surface.send_pending_configure();
+    }
+
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+            if let Some(workspace) = self.workspace_for_mut(&window) {
+                workspace.unmap_window(&window);
+                workspace.refresh();
+                workspace.tile_windows();
+                tracing::debug!("aloooo");
+            }
+        }
     }
 }
 
@@ -314,16 +305,13 @@ fn check_grab<BackendData: Backend + 'static>(
 }
 
 /// Should be called on `WlSurface::commit`
-pub fn handle_commit<'a>(
+pub fn handle_commit(
     popups: &mut PopupManager,
-    mut windows: impl DoubleEndedIterator<Item = &'a WindowElement>,
+    window: Option<&WindowElement>,
     surface: &WlSurface,
 ) {
     // Handle toplevel commits.
-    if let Some(WindowElement::Wayland(ref window)) = windows
-        .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
-        .cloned()
-    {
+    if let Some(WindowElement::Wayland(ref window)) = window {
         let initial_configure_sent = with_states(surface, |states| {
             states
                 .data_map
@@ -393,11 +381,11 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
             return;
         }
 
-        let mut initial_window_location = self
-            .workspaces
-            .current_workspace()
-            .window_location(&window)
-            .unwrap();
+        let Some(workspace) = self.workspace_for(&window) else {
+            return;
+        };
+
+        let mut initial_window_location = workspace.window_location(&window).unwrap();
 
         // If surface is maximized then unmaximize it
         let current_state = surface.current_state();
@@ -450,8 +438,8 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
 
         let window = self
             .workspaces
-            .current_workspace()
-            .windows()
+            .workspaces()
+            .flat_map(|w| w.windows())
             .find(|window| {
                 window
                     .wl_surface()
@@ -460,11 +448,12 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
             })
             .unwrap()
             .clone();
-        let initial_window_location = self
-            .workspaces
-            .current_workspace()
-            .window_location(&window)
-            .unwrap();
+
+        let Some(workspace) = self.workspace_for(&window) else {
+            return;
+        };
+
+        let initial_window_location = workspace.window_location(&window).unwrap();
         let initial_window_size = window.geometry().size;
 
         surface.with_pending_state(|state| {

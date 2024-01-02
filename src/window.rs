@@ -55,7 +55,7 @@ use smithay::{
 };
 
 use super::ssd::HEADER_BAR_HEIGHT;
-use crate::{Backend, Buddaraysh};
+use crate::{shell::layout::ManagedLayer, Backend, Buddaraysh};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum WindowElement {
@@ -216,19 +216,6 @@ impl WindowElement {
         }
     }
 
-    pub fn change_geometry(&self, new_geo: Rectangle<i32, Logical>) {
-        match self {
-            WindowElement::Wayland(w) => {
-                w.toplevel().with_pending_state(|state| {
-                    state.size = Some(new_geo.size);
-                });
-            }
-            WindowElement::X11(x11_surface) => {
-                let _ = x11_surface.configure(new_geo);
-            }
-        }
-    }
-
     pub fn is_decorated(&self, pending: bool) -> bool {
         match self {
             WindowElement::Wayland(window) => {
@@ -339,6 +326,63 @@ impl WindowElement {
             }),
             WindowElement::X11(surface) => {
                 let _ = surface.set_fullscreen(fullscreen);
+            }
+        }
+    }
+
+    pub fn set_geometry(&self, geo: Rectangle<i32, Logical>) {
+        match self {
+            WindowElement::Wayland(window) => window
+                .toplevel()
+                .with_pending_state(|state| state.size = Some(geo.size)),
+            WindowElement::X11(surface) => {
+                let _ = surface.configure(geo);
+            }
+        }
+    }
+
+    pub fn send_configure(&self) -> Option<Serial> {
+        match self {
+            WindowElement::Wayland(window) => window.toplevel().send_pending_configure(),
+            WindowElement::X11(_) => None,
+        }
+    }
+
+    pub fn is_maximized(&self, pending: bool) -> bool {
+        match self {
+            WindowElement::Wayland(window) => {
+                if pending {
+                    window.toplevel().with_pending_state(|pending| {
+                        pending.states.contains(xdg_toplevel::State::Maximized)
+                    })
+                } else {
+                    window
+                        .toplevel()
+                        .current_state()
+                        .states
+                        .contains(xdg_toplevel::State::Maximized)
+                }
+            }
+            WindowElement::X11(surface) => surface.is_maximized(),
+        }
+    }
+
+    pub fn is_override_redirect(&self) -> bool {
+        match self {
+            WindowElement::Wayland(_) => false,
+            WindowElement::X11(w) => w.is_override_redirect(),
+        }
+    }
+
+    pub fn set_activated(&self, activated: bool) {
+        match self {
+            WindowElement::Wayland(window) => {
+                window.set_activated(activated);
+                window.toplevel().send_pending_configure();
+            }
+            #[cfg(feature = "xwayland")]
+            WindowElement::X11(surface) => {
+                let _ = surface.set_activated(activated);
             }
         }
     }
@@ -891,9 +935,19 @@ where
 impl<BackendData: Backend> Buddaraysh<BackendData> {
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
         self.workspaces
-            .current_workspace()
-            .windows()
-            .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
-            .cloned()
+            .workspaces()
+            .find_map(|workspace| workspace.window_for_surface(surface))
     }
+
+    pub fn window_for_element(&self, window: &WindowElement) -> Option<WindowElement> {
+        self.workspaces
+            .workspaces()
+            .find_map(|workspace| workspace.window_for_element(window))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MaximizedState {
+    pub original_geometry: Rectangle<i32, Logical>,
+    pub original_layer: ManagedLayer,
 }

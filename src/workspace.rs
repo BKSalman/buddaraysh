@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 use smithay::{
-    desktop::Space,
+    desktop::space::SpaceElement,
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, Rectangle},
@@ -12,12 +12,13 @@ use crate::{
         FullscreenSurface,
     },
     window::WindowElement,
+    OutputExt,
 };
 
 pub struct Workspaces {
     pub sets: IndexMap<Output, WorkspaceSet>,
     pub backup_set: Option<WorkspaceSet>,
-    amount: usize,
+    pub amount: usize,
 }
 
 impl Workspaces {
@@ -44,6 +45,50 @@ impl Workspaces {
             .unwrap_or_else(|| WorkspaceSet::new(output, self.amount));
 
         self.sets.insert(output.clone(), set);
+    }
+
+    pub fn workspaces_mut(&mut self) -> impl Iterator<Item = &mut Workspace> {
+        self.sets
+            .values_mut()
+            .flat_map(|set| set.workspaces.iter_mut())
+    }
+
+    pub fn workspaces(&self) -> impl Iterator<Item = &Workspace> {
+        self.sets.values().flat_map(|set| set.workspaces.iter())
+    }
+
+    /// Sets the current workspace, and returns Some if the provided index exists, or None if it doesn't exist
+    pub fn set_current_workspace(
+        &mut self,
+        output: &Output,
+        workspace_index: usize,
+    ) -> Option<&Workspace> {
+        if let Some(workspace) = self
+            .sets
+            .get_mut(output)
+            .or_else(|| self.backup_set.as_mut())
+        {
+            return workspace.set_current_workspace(workspace_index);
+        }
+
+        None
+    }
+
+    /// Sets the current workspace, and returns Some if the provided index exists, or None if it doesn't exist
+    pub fn set_current_workspace_mut(
+        &mut self,
+        output: &Output,
+        workspace_index: usize,
+    ) -> Option<&mut Workspace> {
+        if let Some(workspace) = self
+            .sets
+            .get_mut(output)
+            .or_else(|| self.backup_set.as_mut())
+        {
+            return workspace.set_current_workspace_mut(workspace_index);
+        }
+
+        None
     }
 }
 
@@ -80,6 +125,16 @@ impl WorkspaceSet {
     /// Sets the current workspace, and returns Some if the provided index exists, or None if it doesn't exist
     pub fn set_current_workspace(&mut self, workspace_index: usize) -> Option<&Workspace> {
         if let Some(workspace) = self.workspaces.get(workspace_index) {
+            self.current = workspace_index;
+            return Some(workspace);
+        }
+
+        None
+    }
+
+    /// Sets the current workspace, and returns Some if the provided index exists, or None if it doesn't exist
+    pub fn set_current_workspace_mut(&mut self, workspace_index: usize) -> Option<&mut Workspace> {
+        if let Some(workspace) = self.workspaces.get_mut(workspace_index) {
             self.current = workspace_index;
             return Some(workspace);
         }
@@ -136,6 +191,10 @@ impl WorkspaceSet {
         }
         self.output = output.clone();
     }
+
+    pub fn refresh(&mut self) {
+        self.workspaces[self.current].refresh()
+    }
 }
 
 #[derive(Debug)]
@@ -144,7 +203,7 @@ pub struct Workspace {
     pub handle: usize,
     pub tiling_layer: crate::shell::layout::TilingLayout,
     pub floating_layer: crate::shell::layout::FloatingLayout,
-    pub fullscreen: Option<WindowElement>,
+    pub fullscreen: Option<FullscreenSurface>,
 }
 
 impl Workspace {
@@ -188,12 +247,18 @@ impl Workspace {
     }
 
     pub fn set_output(&mut self, output: &Output, location: impl Into<Point<i32, Logical>>) {
+        let old_output = self.tiling_layer.outputs().cloned().next();
+        if let Some(old_output) = old_output {
+            self.tiling_layer.unmap_output(&old_output);
+        }
+        let old_output = self.floating_layer.outputs().cloned().next();
+        if let Some(old_output) = old_output {
+            self.floating_layer.unmap_output(&old_output);
+        }
+
         let location: Point<i32, Logical> = location.into();
-        let old_output = self.tiling_layer.outputs().next().unwrap();
-        self.tiling_layer.unmap_output(old_output);
+
         self.tiling_layer.map_output(output, location);
-        let old_output = self.floating_layer.outputs().next().unwrap();
-        self.floating_layer.unmap_output(old_output);
         self.floating_layer.map_output(output, location);
 
         // TODO: might need to update
@@ -207,6 +272,14 @@ impl Workspace {
             .elements()
             .chain(self.tiling_layer.elements())
             .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
+            .cloned()
+    }
+
+    pub fn window_for_element(&self, window: &WindowElement) -> Option<WindowElement> {
+        self.floating_layer
+            .elements()
+            .chain(self.tiling_layer.elements())
+            .find(|w| *w == window)
             .cloned()
     }
 
@@ -240,14 +313,13 @@ impl Workspace {
         outputs
     }
 
-    pub fn map_window(&mut self, window: WindowElement, pointer_location: Point<f64, Logical>) {
+    pub fn map_window(&mut self, window: WindowElement) {
         if layout::should_be_floating(&window) {
             self.floating_layer
                 .map_element(window, Point::from((0, 0)), true);
         } else {
             self.tiling_layer.map_element(window);
-            let output = { self.output_under(pointer_location).next().cloned().unwrap() };
-            self.tile_windows(&output);
+            self.tile_windows();
         }
     }
 
@@ -255,17 +327,15 @@ impl Workspace {
         let was_floating = self.floating_layer.unmap_element(window);
         let was_tiled = self.floating_layer.unmap_element(window);
 
-        // TODO: store the fullscreen surface in the Workspace struct
-
         if was_floating {
             Some(ManagedState {
                 layer: ManagedLayer::Floating,
-                was_fullscreen: None,
+                was_fullscreen: self.fullscreen.clone(),
             })
         } else if was_tiled {
             Some(ManagedState {
                 layer: ManagedLayer::Tiling,
-                was_fullscreen: None,
+                was_fullscreen: self.fullscreen.clone(),
             })
         } else {
             None
@@ -299,5 +369,49 @@ impl Workspace {
     pub fn refresh(&mut self) {
         self.tiling_layer.refresh();
         self.floating_layer.refresh();
+    }
+
+    pub fn fullscreen_request(
+        &mut self,
+        window: &WindowElement,
+        previously: Option<(ManagedLayer, usize)>,
+    ) {
+        let output = self.output.clone();
+        let geometry = output.geometry();
+        let original_geometry = window.geometry();
+
+        window.set_fullscreen(true);
+        window.set_ssd(false);
+        window.set_geometry(geometry);
+        tracing::trace!("Fullscreening: {:?}", window);
+        self.fullscreen = Some(FullscreenSurface {
+            window: window.clone(),
+            previously,
+            original_geometry,
+        });
+    }
+
+    pub fn unfullscreen_request(
+        &mut self,
+        window: &WindowElement,
+    ) -> Option<(ManagedLayer, usize)> {
+        if let Some(f) = self.fullscreen.clone().filter(|f| &f.window == window) {
+            window.set_fullscreen(false);
+            window.set_geometry(f.original_geometry);
+
+            self.floating_layer.refresh();
+            self.tiling_layer.refresh();
+            self.tile_windows();
+
+            window.send_configure();
+
+            f.previously
+        } else {
+            None
+        }
+    }
+
+    pub fn is_tiled(&self, window: &WindowElement) -> bool {
+        self.tiling_layer.elements().any(|w| w == window)
     }
 }

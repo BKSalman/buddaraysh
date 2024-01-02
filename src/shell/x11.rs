@@ -2,11 +2,8 @@ use std::{cell::RefCell, os::unix::io::OwnedFd};
 
 use smithay::{
     desktop::space::SpaceElement,
-    input::{
-        pointer::{Focus, GrabStartData},
-        Seat,
-    },
-    utils::{Logical, Rectangle, Serial, SERIAL_COUNTER},
+    input::pointer::Focus,
+    utils::{Logical, Rectangle, SERIAL_COUNTER},
     wayland::{
         compositor,
         selection::data_device::{
@@ -32,10 +29,8 @@ use crate::{
     shell::FullscreenSurface,
     ssd::HEADER_BAR_HEIGHT,
     window::WindowElement,
-    Backend, Buddaraysh, CalloopData,
+    Backend, Buddaraysh, CalloopData, OutputExt,
 };
-
-use super::place_new_window;
 
 #[derive(Debug, Default)]
 struct OldGeometry(RefCell<Option<Rectangle<i32, Logical>>>);
@@ -57,94 +52,72 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
-    fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Err(err) = window.set_mapped(true) {
-            tracing::warn!(?window, ?err, "Failed to send Xwayland Mapped-Event");
+    fn map_window_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        surface.set_mapped(true).unwrap();
+        let window = WindowElement::X11(surface);
+        if let Some(output) = self
+            .state
+            .output_under(self.state.pointer.current_location())
+        {
+            let location = self.state.pointer.current_location();
+            if let Some(workspace) = self.state.workspace_for_output_mut(&output) {
+                workspace.map_window(window.clone());
+                let bbox = workspace.window_bbox(&window).unwrap();
+                window.set_geometry(bbox);
+                window.set_ssd(!window.is_decorated(false));
+            }
         }
-
-        let window = WindowElement::X11(window);
         // place_new_window(
         //     self.state.workspaces.current_workspace_mut().space_mut(),
         //     self.state.pointer.current_location(),
         //     &window,
         //     true,
         // );
-        self.state
-            .workspaces
-            .current_workspace_mut()
-            .map_window(window.clone(), self.state.pointer.current_location());
-        let bbox = self
-            .state
-            .workspaces
-            .current_workspace()
-            .window_bbox(&window)
-            .unwrap();
-        let WindowElement::X11(xsurface) = &window else {
-            unreachable!()
-        };
-        if !xsurface.is_override_redirect() {
-            xsurface.configure(Some(bbox)).unwrap();
-            window.set_ssd(!xsurface.is_decorated());
+    }
+
+    fn mapped_override_redirect_window(&mut self, _xwm: XwmId, surface: X11Surface) {
+        self.state.override_redirect_windows.push(surface.clone());
+
+        let location = surface.geometry().loc;
+        let window = WindowElement::X11(surface);
+        if let Some(workspace) = self.state.workspace_for_mut(&window) {
+            workspace.map_window(window);
         }
     }
 
-    fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        self.state.override_redirect_windows.push(window.clone());
-
-        let location = window.geometry().loc;
-        let window = WindowElement::X11(window);
-        self.state
-            .workspaces
-            .current_workspace_mut()
-            .map_window(window, self.state.pointer.current_location());
-    }
-
-    fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        let maybe = self
-            .state
-            .workspaces
-            .current_workspace()
-            .windows()
-            .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
-            .cloned();
-        if let Some(elem) = maybe {
-            self.state
-                .workspaces
-                .current_workspace_mut()
-                .unmap_window(&elem);
+    fn unmapped_window(&mut self, _xwm: XwmId, surface: X11Surface) {
+        let window = WindowElement::X11(surface.clone());
+        if let Some(workspace) = self.state.workspace_for_mut(&window) {
+            let maybe = workspace.windows().find(|e| **e == window).cloned();
+            if let Some(elem) = maybe {
+                workspace.unmap_window(&elem);
+            }
         }
 
-        if window.is_override_redirect() {
+        if surface.is_override_redirect() {
             self.state
                 .override_redirect_windows
-                .retain(|or| or != &window);
+                .retain(|or| or != &surface);
         } else {
-            window.set_mapped(false).unwrap();
+            surface.set_mapped(false).unwrap();
         }
     }
 
-    fn destroyed_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        let maybe = self
-            .state
-            .workspaces
-            .current_workspace()
-            .windows()
-            .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
-            .cloned();
-        if let Some(win) = maybe {
-            tracing::debug!("removing x11 window from windows");
-            self.state
-                .workspaces
-                .current_workspace_mut()
-                .unmap_window(&win);
+    fn destroyed_window(&mut self, _xwm: XwmId, surface: X11Surface) {
+        let window = WindowElement::X11(surface.clone());
+        if let Some(workspace) = self.state.workspace_for_mut(&window) {
+            let maybe = workspace.windows().find(|e| **e == window).cloned();
+            if let Some(window) = maybe {
+                workspace.unmap_window(&window);
+            }
         }
 
-        if window.is_override_redirect() {
+        if surface.is_override_redirect() {
             self.state
                 .override_redirect_windows
-                .retain(|win| win != &window);
+                .retain(|win| win != &surface);
         } else {
-            window.set_mapped(false).unwrap();
+            surface.set_mapped(false).unwrap();
         }
     }
 
@@ -172,24 +145,14 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     fn configure_notify(
         &mut self,
         _xwm: XwmId,
-        window: X11Surface,
+        surface: X11Surface,
         geometry: Rectangle<i32, Logical>,
         _above: Option<u32>,
     ) {
-        let Some(elem) = self
-            .state
-            .workspaces
-            .current_workspace()
-            .windows()
-            .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
-            .cloned()
-        else {
-            return;
-        };
-        self.state
-            .workspaces
-            .current_workspace_mut()
-            .map_window(elem, self.state.pointer.current_location());
+        let window = WindowElement::X11(surface);
+        if let Some(workspace) = self.state.workspace_for_mut(&window) {
+            workspace.map_window(window);
+        }
         // TODO: We don't properly handle the order of override-redirect windows here,
         //       they are always mapped top and then never reordered.
     }
@@ -198,107 +161,53 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         self.state.maximize_request_x11(&window);
     }
 
-    fn unmaximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let Some(elem) = self
+    fn unmaximize_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(window) = self
             .state
-            .workspaces
-            .current_workspace()
-            .windows()
-            .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
-            .cloned()
-        else {
-            return;
-        };
-
-        window.set_maximized(false).unwrap();
-        if let Some(old_geo) = window
-            .user_data()
-            .get::<OldGeometry>()
-            .and_then(|data| data.restore())
+            .window_for_surface(&surface.wl_surface().unwrap())
         {
-            window.configure(old_geo).unwrap();
-            self.state
-                .workspaces
-                .current_workspace_mut()
-                .map_window(elem, self.state.pointer.current_location());
-        }
-    }
-
-    fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        let fullscreen = self
-            .state
-            .workspaces
-            .current_workspace()
-            .windows()
-            .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
-            .map(|elem| {
-                let outputs_for_window = self
-                    .state
-                    .workspaces
-                    .current_workspace()
-                    .outputs_for_window(elem);
-                let output = outputs_for_window
-                    .first()
-                    // The window hasn't been mapped yet, use the primary output instead
-                    .or_else(|| self.state.workspaces.outputs().next())
-                    // Assumes that at least one output exists
-                    .expect("No outputs found");
-                let geometry = self
-                    .state
-                    .workspaces
-                    .current_workspace()
-                    .output_geometry(output)
-                    .unwrap();
-
-                window.set_fullscreen(true).unwrap();
-                elem.set_ssd(false);
-                window.configure(geometry).unwrap();
-                output
+            if let Some(workspace) = self.state.workspace_for_mut(&window) {
+                surface.set_maximized(false).unwrap();
+                if let Some(old_geo) = surface
                     .user_data()
-                    .insert_if_missing(FullscreenSurface::default);
-                let fullscreen = output.user_data().get::<FullscreenSurface>().unwrap();
-                fullscreen.set(
-                    elem.clone(),
-                    self.state.workspaces.current_workspace_index(),
-                );
-                trace!("Fullscreening: {:?}", fullscreen);
-                elem.clone()
-            });
-
-        if let Some(fullscreen) = fullscreen {
-            self.state.workspaces.current_workspace_mut().fullscreen = Some(fullscreen);
-        }
-    }
-
-    fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(elem) = self
-            .state
-            .workspaces
-            .current_workspace()
-            .windows()
-            .find(|e| matches!(e, WindowElement::X11(w) if w == &window))
-        {
-            window.set_fullscreen(false).unwrap();
-            elem.set_ssd(!window.is_decorated());
-            if let Some(output) = self
-                .state
-                .workspaces
-                .current_workspace_mut()
-                .fullscreen
-                .take()
-            {
-                trace!("Unfullscreening: {:?}", elem);
-                output
-                    .user_data()
-                    .get::<FullscreenSurface>()
-                    .unwrap()
-                    .clear();
-                window
-                    .configure(self.state.workspaces.current_workspace().window_bbox(elem))
-                    .unwrap();
-                let output = self.state.workspaces.outputs().next().unwrap();
-                self.state.backend_data.reset_buffers(output);
+                    .get::<OldGeometry>()
+                    .and_then(|data| data.restore())
+                {
+                    surface.configure(old_geo).unwrap();
+                    workspace.map_window(window);
+                }
             }
+        }
+    }
+
+    fn fullscreen_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        if let Some(window) = self
+            .state
+            .window_for_surface(&surface.wl_surface().unwrap())
+        {
+            if let Some(workspace) = self.state.workspace_for_mut(&window) {
+                workspace.fullscreen_request(&window, None)
+            }
+        }
+    }
+
+    fn unfullscreen_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        let window = WindowElement::X11(surface);
+        let output = if let Some(workspace) = self
+            .state
+            .window_for_surface(&window.wl_surface().unwrap())
+            .and_then(|window| self.state.workspace_for_mut(&window))
+        {
+            let previous = workspace.unfullscreen_request(&window);
+            window.set_ssd(!window.is_decorated(false));
+            trace!("Unfullscreening: {:?}", window);
+            assert!(previous.is_none());
+            Some(workspace.output.clone())
+        } else {
+            None
+        };
+        if let Some(output) = output {
+            self.state.backend_data.reset_buffers(&output);
         }
     }
 
@@ -311,7 +220,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     ) {
         let start_data = self.state.pointer.grab_start_data().unwrap();
         self.state
-            .resize_request_x11(edges, x11_surface, start_data);
+            .resize_request_x11(edges, &x11_surface, start_data);
     }
 
     fn move_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32) {
@@ -408,20 +317,17 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
     pub fn resize_request_x11(
         &mut self,
         edges: X11ResizeEdge,
-        x11_surface: X11Surface,
+        surface: &X11Surface,
         start_data: smithay::input::pointer::GrabStartData<Buddaraysh<BackendData>>,
     ) {
         let pointer = self.pointer.clone();
         let serial = SERIAL_COUNTER.next_serial();
 
-        let Some(window) = self
-            .workspaces
-            .current_workspace()
-            .windows()
-            .find(|e| matches!(e, WindowElement::X11(w) if w == &x11_surface))
-        else {
-            return;
-        };
+        if let Some(window) = self.window_for_surface(&surface.wl_surface().unwrap()) {
+            if let Some(workspace) = self.workspace_for(&window) {
+                let geometry = window.geometry();
+                let loc = workspace.window_location(&window).unwrap();
+                let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
         let geometry = window.geometry();
         let loc = self
@@ -436,127 +342,83 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             initial_rect.size.h -= HEADER_BAR_HEIGHT;
         }
 
-        compositor::with_states(&window.wl_surface().unwrap(), |states| {
-            states
-                .data_map
-                .insert_if_missing(RefCell::<ResizeSurfaceState>::default);
-            let state = states
-                .data_map
-                .get::<RefCell<ResizeSurfaceState>>()
-                .unwrap();
+                    *state.borrow_mut() = ResizeSurfaceState::Resizing {
+                        edges: edges.into(),
+                        initial_rect,
+                    };
+                });
 
-            *state.borrow_mut() = ResizeSurfaceState::Resizing {
-                edges: edges.into(),
-                initial_rect,
-            };
-        });
+                tracing::info!(?edges);
 
-        tracing::info!(?edges);
+                let grab = ResizeSurfaceGrab {
+                    start_data,
+                    window: window.clone(),
+                    edges: edges.into(),
+                    initial_rect,
+                    last_window_size: initial_window_size,
+                };
 
-        let grab = ResizeSurfaceGrab {
-            start_data,
-            window: window.clone(),
-            edges: edges.into(),
-            initial_rect,
-            last_window_size: initial_window_size,
-        };
-
-        pointer.set_grab(self, grab, serial, Focus::Clear);
+                pointer.set_grab(self, grab, serial, Focus::Clear);
+            }
+        }
     }
 }
 
 impl<BackendData: Backend> Buddaraysh<BackendData> {
-    pub fn maximize_request_x11(&mut self, window: &X11Surface) {
-        let Some(elem) = self
-            .workspaces
-            .current_workspace()
-            .windows()
-            .find(|e| matches!(e, WindowElement::X11(w) if w == window))
-            .cloned()
-        else {
-            return;
-        };
+    pub fn maximize_request_x11(&mut self, surface: &X11Surface) {
+        if let Some(window) = self.window_for_surface(&surface.wl_surface().unwrap()) {
+            if let Some(workspace) = self.workspace_for_mut(&window) {
+                let old_geo = workspace.window_bbox(&window).unwrap();
+                let geometry = workspace.output.geometry();
 
-        let old_geo = self
-            .workspaces
-            .current_workspace()
-            .window_bbox(&elem)
-            .unwrap();
-        let outputs_for_window = self
-            .workspaces
-            .current_workspace()
-            .outputs_for_window(&elem);
-        let output = outputs_for_window
-            .first()
-            // The window hasn't been mapped yet, use the primary output instead
-            .or_else(|| self.workspaces.outputs().next())
-            // Assumes that at least one output exists
-            .expect("No outputs found");
-        let geometry = self
-            .workspaces
-            .current_workspace()
-            .output_geometry(output)
-            .unwrap();
-
-        window.set_maximized(true).unwrap();
-        window.configure(geometry).unwrap();
-        window.user_data().insert_if_missing(OldGeometry::default);
-        window
-            .user_data()
-            .get::<OldGeometry>()
-            .unwrap()
-            .save(old_geo);
-        self.workspaces
-            .current_workspace_mut()
-            .map_window(elem, self.pointer.current_location());
+                surface.set_maximized(true).unwrap();
+                window.set_geometry(geometry);
+                window.user_data().insert_if_missing(OldGeometry::default);
+                window
+                    .user_data()
+                    .get::<OldGeometry>()
+                    .unwrap()
+                    .save(old_geo);
+                workspace.map_window(window);
+            }
+        }
     }
 
     pub fn move_request_x11(
         &mut self,
-        window: &X11Surface,
+        surface: &X11Surface,
         start_data: smithay::input::pointer::GrabStartData<Buddaraysh<BackendData>>,
     ) {
-        let Some(element) = self
-            .workspaces
-            .current_workspace()
-            .windows()
-            .find(|e| matches!(e, WindowElement::X11(w) if w == window))
-        else {
-            return;
-        };
+        if let Some(window) = self.window_for_surface(&surface.wl_surface().unwrap()) {
+            if let Some(workspace) = self.workspace_for_mut(&window) {
+                let mut initial_window_location = workspace.window_location(&window).unwrap();
 
-        let mut initial_window_location = self
-            .workspaces
-            .current_workspace()
-            .window_location(element)
-            .unwrap();
+                // If surface is maximized then unmaximize it
+                if surface.is_maximized() {
+                    surface.set_maximized(false).unwrap();
+                    let pos = self.pointer.current_location();
+                    initial_window_location = (pos.x as i32, pos.y as i32).into();
+                    if let Some(old_geo) = window
+                        .user_data()
+                        .get::<OldGeometry>()
+                        .and_then(|data| data.restore())
+                    {
+                        window.set_geometry(Rectangle::from_loc_and_size(
+                            initial_window_location,
+                            old_geo.size,
+                        ));
+                    }
+                }
 
-        // If surface is maximized then unmaximize it
-        if window.is_maximized() {
-            window.set_maximized(false).unwrap();
-            let pos = self.pointer.current_location();
-            initial_window_location = (pos.x as i32, pos.y as i32).into();
-            if let Some(old_geo) = window
-                .user_data()
-                .get::<OldGeometry>()
-                .and_then(|data| data.restore())
-            {
-                window
-                    .configure(Rectangle::from_loc_and_size(
-                        initial_window_location,
-                        old_geo.size,
-                    ))
-                    .unwrap();
+                let grab = MoveSurfaceGrab {
+                    start_data,
+                    window: window.clone(),
+                    initial_window_location,
+                };
+
+                let pointer = self.pointer.clone();
+                pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
             }
         }
-
-        let grab = MoveSurfaceGrab {
-            start_data,
-            window: element.clone(),
-            initial_window_location,
-        };
-
-        let pointer = self.pointer.clone();
-        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
     }
 }

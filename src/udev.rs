@@ -53,7 +53,7 @@ use smithay::{
     },
     delegate_dmabuf, delegate_drm_lease,
     desktop::{
-        space::{Space, SurfaceTree},
+        space::SurfaceTree,
         utils::{
             surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
             update_surface_primary_scanout_output, OutputPresentationFeedback,
@@ -115,9 +115,8 @@ use crate::{
     protocols::screencopy::{frame::Screencopy, ScreencopyHandler, ScreencopyManagerState},
     render::{output_elements, CustomRenderElements},
     systemd,
-    window::WindowElement,
     workspace::Workspace,
-    Backend, Buddaraysh, CalloopData,
+    Backend, Buddaraysh, CalloopData, OutputExt,
 };
 
 type UdevRenderer<'a, 'b, 'c> =
@@ -814,7 +813,9 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         if result.is_err() {
             state.running.store(false, Ordering::SeqCst);
         } else {
-            state.workspaces.current_workspace_mut().refresh();
+            for ws in state.workspaces.sets.values_mut() {
+                ws.refresh();
+            }
             state.popups.cleanup();
             display_handle.flush_clients().unwrap();
         }
@@ -932,11 +933,11 @@ impl Buddaraysh<UdevData> {
         connector: connector::Info,
         crtc: crtc::Handle,
     ) {
-        let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
-            device
-        } else {
+        let Some(device) = self.backend_data.backends.get_mut(&node) else {
             return;
         };
+
+        let gbm = device.gbm.clone();
 
         let mut renderer = self
             .backend_data
@@ -1026,8 +1027,28 @@ impl Buddaraysh<UdevData> {
             );
             let global = output.create_global::<Buddaraysh<UdevData>>(&self.display_handle);
 
-            // TODO: make this configurable
-            let w = self.global_space().size.w;
+            // TODO: make monitor location configurable
+            let w = self
+                .workspaces
+                .sets
+                .keys()
+                .chain(
+                    self.workspaces
+                        .backup_set
+                        .as_ref()
+                        .into_iter()
+                        .map(|set| &set.output),
+                )
+                .fold(
+                    Option::<Rectangle<i32, Logical>>::None,
+                    |maybe_geo, output| match maybe_geo {
+                        Some(rect) => Some(rect.merge(output.geometry())),
+                        None => Some(output.geometry()),
+                    },
+                )
+                .unwrap_or_default()
+                .size
+                .w;
             let position = (w, 0).into();
 
             output.set_preferred(wl_mode);
@@ -1042,10 +1063,8 @@ impl Buddaraysh<UdevData> {
             #[cfg(feature = "debug")]
             let fps_element = self.backend_data.fps_texture.clone().map(FpsElement::new);
 
-            let allocator = GbmAllocator::new(
-                device.gbm.clone(),
-                GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
-            );
+            let allocator =
+                GbmAllocator::new(gbm, GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
 
             let color_formats = if std::env::var("BUD_DISABLE_10BIT").is_ok() {
                 SUPPORTED_FORMATS_8BIT_ONLY
@@ -1251,13 +1270,25 @@ impl Buddaraysh<UdevData> {
             }
         };
 
-        let output = if let Some(output) = self.workspaces.outputs().find(|o| {
-            o.user_data().get::<UdevOutputId>()
-                == Some(&UdevOutputId {
-                    device_id: surface.device_id,
-                    crtc,
-                })
-        }) {
+        // TODO: figure out how to use self.outputs() without borrow checker yelling
+        let output = if let Some(output) = self
+            .workspaces
+            .sets
+            .keys()
+            .chain(
+                self.workspaces
+                    .backup_set
+                    .as_ref()
+                    .into_iter()
+                    .map(|set| &set.output),
+            )
+            .find(|o| {
+                o.user_data().get::<UdevOutputId>()
+                    == Some(&UdevOutputId {
+                        device_id: surface.device_id,
+                        crtc,
+                    })
+            }) {
             output.clone()
         } else {
             // somehow we got called with an invalid output
@@ -1430,6 +1461,14 @@ impl Buddaraysh<UdevData> {
             return;
         };
 
+        let mut outputs = self.workspaces.sets.keys().chain(
+            self.workspaces
+                .backup_set
+                .as_ref()
+                .into_iter()
+                .map(|set| &set.output),
+        );
+
         let start = Instant::now();
 
         // TODO get scale from the rendersurface when supporting HiDPI
@@ -1485,7 +1524,7 @@ impl Buddaraysh<UdevData> {
                 texture
             });
 
-        let Some(output) = self.workspaces.outputs().find(|o| {
+        let Some(output) = outputs.find(|o| {
             o.user_data().get::<UdevOutputId>()
                 == Some(&UdevOutputId {
                     device_id: surface.device_id,
@@ -1496,10 +1535,21 @@ impl Buddaraysh<UdevData> {
             return;
         };
 
+        let Some(workspaceset) = self.workspaces.sets.iter().find(|workspaceset| {
+            workspaceset
+                .1
+                .workspaces()
+                .iter()
+                .find(|w| w.output == *output)
+                .is_some()
+        }) else {
+            return;
+        };
+
         let result = render_surface(
             surface,
             &mut renderer,
-            self.workspaces.current_workspace(),
+            workspaceset.1.current_workspace(),
             &output,
             self.pointer.current_location(),
             &pointer_image,
@@ -1669,7 +1719,6 @@ fn get_surface_dmabuf_feedback(
 fn render_surface<'a, 'b, 'c>(
     surface: &'a mut Surface,
     renderer: &mut UdevRenderer<'a, 'b, 'c>,
-    // space: &Space<WindowElement>,
     workspace: &Workspace,
     output: &Output,
     pointer_location: Point<f64, Logical>,
@@ -1678,7 +1727,6 @@ fn render_surface<'a, 'b, 'c>(
     dnd_icon: &Option<wl_surface::WlSurface>,
     cursor_status: &mut CursorImageStatus,
     clock: &Clock<Monotonic>,
-    // show_window_preview: bool,
     screencopy: Option<Screencopy>,
 ) -> Result<bool, SwapBuffersError> {
     let output_geometry = workspace.output_geometry(output).unwrap();
@@ -2000,7 +2048,7 @@ fn initial_render(
 
 impl ScreencopyHandler for Buddaraysh<UdevData> {
     fn output(&mut self, output: &WlOutput) -> &Output {
-        self.workspaces.outputs().find(|o| o.owns(output)).unwrap()
+        self.outputs().find(|o| o.owns(output)).unwrap()
     }
 
     fn frame(&mut self, frame: Screencopy) {

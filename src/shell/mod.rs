@@ -9,6 +9,8 @@ use smithay::{
 
 use crate::{window::WindowElement, workspace::Workspace};
 
+use self::layout::ManagedLayer;
+
 pub mod layout;
 mod x11;
 pub mod xdg;
@@ -80,23 +82,30 @@ fn fullscreen_output_geometry(
         .and_then(|o| workspace.output_geometry(&o))
 }
 
-#[derive(Default, Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct FullscreenSurface {
-    window: RefCell<Option<WindowElement>>,
-    workspace_index: RefCell<Option<usize>>,
+    pub window: WindowElement,
+    pub previously: Option<(ManagedLayer, usize)>,
+    pub original_geometry: Rectangle<i32, Logical>,
 }
 
-impl FullscreenSurface {
-    pub fn set(&self, window: WindowElement, workspace_index: usize) {
-        *self.window.borrow_mut() = Some(window);
-        *self.workspace_index.borrow_mut() = Some(workspace_index);
-    }
-
-    pub fn get(&self) -> (Option<WindowElement>, Option<usize>) {
-        (self.window.borrow().clone(), *self.workspace_index.borrow())
-    }
-
-    pub fn clear(&self) -> (Option<WindowElement>, Option<usize>) {
-        (self.window.borrow_mut().take(), self.workspace_index.take())
+impl PartialEq for FullscreenSurface {
+    fn eq(&self, other: &Self) -> bool {
+        self.window == other.window
     }
 }
+
+// impl FullscreenSurface {
+//     pub fn set(&self, window: WindowElement, workspace_index: usize) {
+//         *self.window.borrow_mut() = Some(window);
+//         *self.workspace_index.borrow_mut() = Some(workspace_index);
+//     }
+
+//     pub fn get(&self) -> (Option<WindowElement>, Option<usize>) {
+//         (self.window.borrow().clone(), *self.workspace_index.borrow())
+//     }
+
+//     pub fn clear(&self) -> (Option<WindowElement>, Option<usize>) {
+//         (self.window.borrow_mut().take(), self.workspace_index.take())
+//     }
+// }
