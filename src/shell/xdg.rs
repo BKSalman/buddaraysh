@@ -38,6 +38,7 @@ use crate::{
     focus::FocusTarget,
     grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
     shell::{layout::ManagedLayer, FullscreenSurface},
+    utils::geometry::{PointExt, PointLocalExt, SizeExt},
     window::WindowElement,
     Backend, Buddaraysh, OutputExt,
 };
@@ -49,7 +50,7 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let window = WindowElement::Wayland(Window::new(surface));
-        if let Some(output) = self.output_under(self.pointer.current_location()) {
+        if let Some(output) = self.output_under(self.pointer.current_location().as_global()) {
             if let Some(workspace) = self.current_workspace_for_output_mut(&output) {
                 workspace.map_window(window);
                 // place_new_window(
@@ -84,9 +85,9 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
             // calculate the geometry of the popup here. For simplicity we just
             // use the default implementation here that does not take the
             // window position and output constraints into account.
-            let cursor_location = self.pointer.current_location();
+            let pointer_location = self.pointer.current_location().as_global();
             let output = self
-                .output_under(cursor_location)
+                .output_under(pointer_location)
                 .or_else(|| self.outputs().next().cloned())
                 .unwrap();
 
@@ -207,7 +208,7 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
 
             surface.with_pending_state(|state| {
                 state.states.set(xdg_toplevel::State::Fullscreen);
-                state.size = Some(output_geometry.size);
+                state.size = Some(output_geometry.size.as_logical());
                 state.fullscreen_output = wl_output;
             });
             let layer = if workspace.is_tiled(&window) {
@@ -413,7 +414,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         let grab = MoveSurfaceGrab {
             start_data,
             window,
-            initial_window_location,
+            initial_window_location: initial_window_location.as_logical(),
         };
 
         pointer.set_grab(self, grab, serial, Focus::Clear);
@@ -457,8 +458,8 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
 
         surface.send_pending_configure();
 
-        let mut initial_rect =
-            Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
+        let initial_rect =
+            Rectangle::from_loc_and_size(initial_window_location.as_logical(), initial_window_size);
 
         if window.decoration_state().is_ssd {
             initial_rect.size.h -= HEADER_BAR_HEIGHT;

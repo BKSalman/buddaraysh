@@ -5,7 +5,12 @@ use smithay::{
     utils::{Logical, Point, Rectangle},
 };
 
-use crate::{window::WindowElement, workspace::Workspace, OutputExt};
+use crate::{
+    utils::geometry::{Global, PointExt, PointGlobalExt, PointLocalExt, RectExt, RectLocalExt},
+    window::WindowElement,
+    workspace::Workspace,
+    OutputExt,
+};
 
 #[derive(Default, Debug)]
 pub struct TilingLayout {
@@ -104,9 +109,8 @@ impl Workspace {
             // |     just return the output geometry.
             op_geo
         } else {
-            let zone = map.non_exclusive_zone();
-            map.cleanup();
-            Rectangle::from_loc_and_size(op_geo.loc + zone.loc, zone.size)
+            let zone = map.non_exclusive_zone().as_local().to_global(&output);
+            Rectangle::from_loc_and_size(zone.loc, zone.size)
         };
 
         match self.tiling_layer.layout {
@@ -126,12 +130,14 @@ impl Workspace {
                 if stack_windows_count > 0 {
                     // half width
                     let loc = geo.loc;
-                    let size: smithay::utils::Size<i32, smithay::utils::Logical> =
+                    let size: smithay::utils::Size<i32, Global> =
                         (geo.size.w / 2, geo.size.h).into();
                     let master_geo = Rectangle::from_loc_and_size(loc, size);
                     master.set_geometry(master_geo);
                     master.send_configure();
-                    self.tiling_layer.space.map_element(master, loc, true);
+                    self.tiling_layer
+                        .space
+                        .map_element(master, loc.as_logical(), true);
 
                     let stack_window_height = size.h / stack_windows_count as i32;
 
@@ -151,14 +157,16 @@ impl Workspace {
                         stack_window.send_configure();
                         self.tiling_layer.space.map_element(
                             stack_window,
-                            stack_window_geo.loc,
+                            stack_window_geo.loc.as_logical(),
                             true,
                         );
                     }
                 } else {
                     master.set_geometry(geo);
                     master.send_configure();
-                    self.tiling_layer.space.map_element(master, geo.loc, true);
+                    self.tiling_layer
+                        .space
+                        .map_element(master, geo.loc.as_logical(), true);
                 }
             }
         }

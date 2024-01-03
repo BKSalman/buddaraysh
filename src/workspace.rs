@@ -11,6 +11,7 @@ use crate::{
         layout::{self, ManagedLayer, ManagedState},
         FullscreenSurface,
     },
+    utils::geometry::{Global, Local, PointExt, PointGlobalExt, PointLocalExt, RectExt},
     window::WindowElement,
     OutputExt,
 };
@@ -303,12 +304,18 @@ impl Workspace {
 
     pub fn window_under(
         &self,
-        point: impl Into<Point<f64, Logical>>,
-    ) -> Option<(&WindowElement, Point<i32, Logical>)> {
-        let point: Point<f64, Logical> = point.into();
+        location: Point<f64, Global>,
+    ) -> Option<(WindowElement, Point<i32, Global>)> {
+        let location = location.to_local(&self.output);
         self.floating_layer
-            .element_under(point)
-            .or_else(|| self.tiling_layer.element_under(point))
+            .element_under(location.as_logical())
+            .map(|(window, p)| (window.clone(), p.as_local()))
+            .or_else(|| {
+                self.tiling_layer
+                    .element_under(location.as_logical())
+                    .map(|(window, p)| (window.clone(), p.as_local()))
+            })
+            .map(|(w, p)| (w, p.to_global(&self.output)))
     }
 
     pub fn window_bbox(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
@@ -367,10 +374,11 @@ impl Workspace {
         }
     }
 
-    pub fn window_location(&self, window: &WindowElement) -> Option<Point<i32, Logical>> {
+    pub fn window_location(&self, window: &WindowElement) -> Option<Point<i32, Local>> {
         self.floating_layer
             .element_location(window)
             .or_else(|| self.tiling_layer.element_location(window))
+            .map(Point::as_local)
     }
 
     pub fn raise_window(&mut self, window: &WindowElement, activate: bool) {
@@ -422,11 +430,7 @@ impl Workspace {
     ) -> Option<(ManagedLayer, usize)> {
         if let Some(f) = self.fullscreen.clone().filter(|f| &f.window == window) {
             window.set_fullscreen(false);
-            window.set_geometry(f.original_geometry);
-
-            self.refresh();
-            self.tile_windows();
-
+            window.set_geometry(f.original_geometry.as_global());
             window.send_configure();
 
             f.previously

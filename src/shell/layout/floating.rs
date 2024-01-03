@@ -5,7 +5,10 @@ use smithay::{
     utils::{Logical, Point, Rectangle},
 };
 
-use crate::window::WindowElement;
+use crate::{
+    utils::geometry::{Local, PointLocalExt},
+    window::WindowElement,
+};
 
 #[derive(Default, Debug)]
 pub struct FloatingLayout {
@@ -80,10 +83,11 @@ impl FloatingLayout {
     pub fn map_element(
         &mut self,
         window: WindowElement,
-        location: impl Into<Point<i32, Logical>>,
+        location: Point<i32, Local>,
         activate: bool,
     ) {
-        self.space.map_element(window, location, activate);
+        self.space
+            .map_element(window, location.as_logical(), activate);
     }
 
     pub fn refresh(&mut self) {

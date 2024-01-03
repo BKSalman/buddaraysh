@@ -27,7 +27,7 @@ use smithay::{
         wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge,
         wayland_server::DisplayHandle,
     },
-    utils::{Logical, Point, Serial, SERIAL_COUNTER},
+    utils::{Point, Serial, SERIAL_COUNTER},
     wayland::{
         input_method::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
@@ -41,8 +41,16 @@ use smithay::{
 use tracing::{error, info, warn};
 
 use crate::{
-    focus::FocusTarget, shell::layout::ManagedLayer, state::Buddaraysh, udev::UdevData,
-    window::WindowElement, winit::WinitData, Action, Backend, OutputExt, BTN_LEFT, BTN_RIGHT,
+    focus::FocusTarget,
+    shell::layout::ManagedLayer,
+    state::Buddaraysh,
+    udev::UdevData,
+    utils::geometry::{
+        Global, PointExt, PointGlobalExt, PointLocalExt, RectExt, RectLocalExt, SizeExt,
+    },
+    window::WindowElement,
+    winit::WinitData,
+    Action, Backend, OutputExt, BTN_LEFT, BTN_RIGHT,
 };
 
 impl<BackendData: Backend> Buddaraysh<BackendData> {
@@ -192,7 +200,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 }
             }
             Action::SwitchToWorkspace(workspace_index) => {
-                let pointer_location = self.pointer.current_location();
+                let pointer_location = self.pointer.current_location().as_global();
                 let Some(output) = self.output_under(pointer_location) else {
                     return;
                 };
@@ -415,7 +423,10 @@ impl Buddaraysh<WinitData> {
 
                 let output_geo = output.geometry();
 
-                let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
+                let pos = output_geo.loc.to_f64()
+                    + event
+                        .position_transformed(output_geo.size.as_logical())
+                        .as_global();
 
                 let serial = SERIAL_COUNTER.next_serial();
 
@@ -429,13 +440,14 @@ impl Buddaraysh<WinitData> {
                     output,
                     workspace,
                     &self.override_redirect_windows,
-                );
+                )
+                .map(|(target, pos)| (target, pos.as_logical()));
 
                 pointer.motion(
                     self,
                     under,
                     &MotionEvent {
-                        location: pos,
+                        location: pos.as_logical(),
                         serial,
                         time: event.time_msec(),
                     },
@@ -452,8 +464,10 @@ impl Buddaraysh<WinitData> {
 
                 let button_state = event.state();
 
+                let pointer_location = pointer.current_location().as_global();
+
                 if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
-                    let Some(output) = self.output_under(pointer.current_location()) else {
+                    let Some(output) = self.output_under(pointer_location) else {
                         return;
                     };
                     let Some(workspace) = self.current_workspace_for_output_mut(&output) else {
@@ -461,7 +475,7 @@ impl Buddaraysh<WinitData> {
                     };
 
                     if let Some((window, _loc)) = workspace
-                        .window_under(pointer.current_location())
+                        .window_under(pointer_location)
                         .map(|(w, l)| (w.clone(), l))
                     {
                         workspace.raise_window(&window, true);
@@ -606,13 +620,13 @@ impl Buddaraysh<UdevData> {
                 }
             }
             InputEvent::PointerMotion { event, .. } => {
-                let mut pointer_location = self.pointer.current_location();
                 let serial = SERIAL_COUNTER.next_serial();
 
                 let pointer = self.pointer.clone();
+                let mut pointer_location = pointer.current_location().as_global();
                 // TODO: manage active output instead of constantly using `output_under`
                 let output = self
-                    .output_under(pointer.current_location())
+                    .output_under(pointer_location)
                     .or_else(|| self.outputs().next().cloned())
                     .unwrap();
                 let Some(workspace) = self.workspace_for_output(&output) else {
@@ -623,7 +637,8 @@ impl Buddaraysh<UdevData> {
                     &output,
                     workspace,
                     &self.override_redirect_windows,
-                );
+                )
+                .map(|(target, pos)| (target, pos.as_logical()));
 
                 let mut pointer_locked = false;
                 let mut pointer_confined = false;
@@ -636,7 +651,7 @@ impl Buddaraysh<UdevData> {
                         Some(constraint) if constraint.is_active() => {
                             // Constraint does not apply if not within region
                             if !constraint.region().map_or(true, |x| {
-                                x.contains(pointer_location.to_i32_round() - *surface_loc)
+                                x.contains(pointer.current_location().to_i32_round() - *surface_loc)
                             }) {
                                 return;
                             }
@@ -670,7 +685,7 @@ impl Buddaraysh<UdevData> {
                     return;
                 }
 
-                pointer_location += event.delta();
+                pointer_location += event.delta().as_global();
 
                 // clamp to screen limits
                 // this event is never generated by winit
@@ -685,7 +700,8 @@ impl Buddaraysh<UdevData> {
                     &output,
                     workspace,
                     &self.override_redirect_windows,
-                );
+                )
+                .map(|(target, p)| (target, p.as_logical()));
 
                 // If confined, don't move pointer if it would go outside surface or region
                 if pointer_confined {
@@ -697,7 +713,9 @@ impl Buddaraysh<UdevData> {
                             return;
                         }
                         if let Some(region) = confine_region {
-                            if !region.contains(pointer_location.to_i32_round() - *surface_loc) {
+                            if !region.contains(
+                                pointer_location.as_logical().to_i32_round() - *surface_loc,
+                            ) {
                                 pointer.frame(self);
                                 return;
                             }
@@ -709,7 +727,7 @@ impl Buddaraysh<UdevData> {
                     self,
                     under,
                     &MotionEvent {
-                        location: pointer_location,
+                        location: pointer_location.as_logical(),
                         serial,
                         time: event.time_msec(),
                     },
@@ -723,7 +741,8 @@ impl Buddaraysh<UdevData> {
                 {
                     with_pointer_constraint(&under, &pointer, |constraint| match constraint {
                         Some(constraint) if !constraint.is_active() => {
-                            let point = pointer_location.to_i32_round() - surface_location;
+                            let point =
+                                pointer_location.as_logical().to_i32_round() - surface_location;
                             if constraint
                                 .region()
                                 .map_or(true, |region| region.contains(point))
@@ -763,13 +782,14 @@ impl Buddaraysh<UdevData> {
                     &output,
                     workspace,
                     &self.override_redirect_windows,
-                );
+                )
+                .map(|(target, p)| (target, p.as_logical()));
 
                 pointer.motion(
                     self,
                     under,
                     &MotionEvent {
-                        location: pointer_location,
+                        location: pointer_location.as_logical(),
                         serial,
                         time: event.time_msec(),
                     },
@@ -781,6 +801,7 @@ impl Buddaraysh<UdevData> {
                 self.update_keyboard_focus(serial);
 
                 let pointer = self.pointer.clone();
+                let pointer_location = pointer.current_location().as_global();
 
                 let button = event.button_code();
 
@@ -792,7 +813,7 @@ impl Buddaraysh<UdevData> {
                     let modifiers = keyboard.modifier_state();
 
                     if !self.seat.keyboard_shortcuts_inhibited() {
-                        let Some(output) = self.output_under(pointer.current_location()) else {
+                        let Some(output) = self.output_under(pointer_location) else {
                             return;
                         };
 
@@ -807,7 +828,7 @@ impl Buddaraysh<UdevData> {
                             };
                             if let Some((FocusTarget::Window(window), _loc)) =
                                 Buddaraysh::<UdevData>::surface_under(
-                                    pointer.current_location(),
+                                    pointer_location,
                                     &output,
                                     workspace,
                                     &self.override_redirect_windows,
@@ -819,7 +840,7 @@ impl Buddaraysh<UdevData> {
                                         let toplevel = w.toplevel().clone();
                                         let focus = workspace
                                             .window_location(&window)
-                                            .map(|l| (FocusTarget::Window(window), l));
+                                            .map(|l| (FocusTarget::Window(window), l.as_logical()));
                                         let start_data = smithay::input::pointer::GrabStartData {
                                             focus,
                                             button,
@@ -833,7 +854,7 @@ impl Buddaraysh<UdevData> {
                                         let w = w.clone();
                                         let focus = workspace
                                             .window_location(&window)
-                                            .map(|l| (FocusTarget::Window(window), l));
+                                            .map(|l| (FocusTarget::Window(window), l.as_logical()));
 
                                         let start_data = smithay::input::pointer::GrabStartData {
                                             focus,
@@ -857,13 +878,12 @@ impl Buddaraysh<UdevData> {
                             };
                             if let Some((FocusTarget::Window(window), _loc)) =
                                 Buddaraysh::<UdevData>::surface_under(
-                                    pointer.current_location(),
+                                    pointer_location,
                                     &output,
                                     workspace,
                                     &self.override_redirect_windows,
                                 )
                             {
-                                let pointer_location = pointer.current_location();
                                 let window_location = workspace.window_location(&window).unwrap();
                                 let geometry = window.geometry();
                                 info!(?geometry, ?pointer_location, ?window_location);
@@ -871,7 +891,8 @@ impl Buddaraysh<UdevData> {
                                     WindowElement::Wayland(ref w) => {
                                         let seat = self.seat.clone();
                                         let toplevel = w.toplevel().clone();
-                                        let diff = pointer_location - window_location.to_f64();
+                                        let diff = pointer_location
+                                            - window_location.to_global(&workspace.output).to_f64();
                                         let half_width = (geometry.size.w / 2) as f64;
                                         let half_height = (geometry.size.h / 2) as f64;
                                         let edge = if diff.x > half_width && diff.y > half_height {
@@ -902,7 +923,8 @@ impl Buddaraysh<UdevData> {
                                         let window_location =
                                             workspace.window_location(&window).unwrap();
                                         let geometry = window.geometry();
-                                        let diff = pointer_location - window_location.to_f64();
+                                        let diff = pointer_location
+                                            - window_location.as_logical().to_f64();
                                         let half_width = (geometry.size.w / 2) as f64;
                                         let half_height = (geometry.size.h / 2) as f64;
                                         let edge = if diff.x < half_width && diff.y < half_height {
@@ -1066,8 +1088,10 @@ impl Buddaraysh<UdevData> {
                 let Some(workspace) = self.workspace_for_output(output) else {
                     return;
                 };
-                let pointer_location =
-                    event.position_transformed(output_geometry.size) + output_geometry.loc.to_f64();
+                let pointer_location = output_geometry.loc.to_f64()
+                    + event
+                        .position_transformed(output_geometry.size.as_logical())
+                        .as_global();
 
                 let pointer = self.pointer.clone();
                 let under = Buddaraysh::<UdevData>::surface_under(
@@ -1075,7 +1099,8 @@ impl Buddaraysh<UdevData> {
                     output,
                     workspace,
                     &self.override_redirect_windows,
-                );
+                )
+                .map(|(target, p)| (target, p.as_logical()));
                 let tablet = tablet_seat.get_tablet(&TabletDescriptor::from(&event.device()));
                 let tool = tablet_seat.get_tool(&event.tool());
 
@@ -1083,7 +1108,7 @@ impl Buddaraysh<UdevData> {
                     self,
                     under.clone(),
                     &MotionEvent {
-                        location: pointer_location,
+                        location: pointer_location.as_logical(),
                         serial: SERIAL_COUNTER.next_serial(),
                         time: 0,
                     },
@@ -1110,7 +1135,7 @@ impl Buddaraysh<UdevData> {
                     }
 
                     tool.motion(
-                        pointer_location,
+                        pointer_location.as_logical(),
                         under.and_then(|(f, loc)| f.wl_surface().map(|s| (s, loc))),
                         &tablet,
                         SERIAL_COUNTER.next_serial(),
@@ -1131,8 +1156,10 @@ impl Buddaraysh<UdevData> {
                         let tool = event.tool();
                         tablet_seat.add_tool::<Self>(&self.display_handle, &tool);
 
-                        let pointer_location = event.position_transformed(output_geometry.size)
-                            + output_geometry.loc.to_f64();
+                        let pointer_location = output_geometry.loc.to_f64()
+                            + event
+                                .position_transformed(output_geometry.size.as_logical())
+                                .as_global();
 
                         let pointer = self.pointer.clone();
                         let under = Buddaraysh::<UdevData>::surface_under(
@@ -1140,7 +1167,8 @@ impl Buddaraysh<UdevData> {
                             output,
                             workspace,
                             &self.override_redirect_windows,
-                        );
+                        )
+                        .map(|(target, p)| (target, p.as_logical()));
                         let tablet =
                             tablet_seat.get_tablet(&TabletDescriptor::from(&event.device()));
                         let tool = tablet_seat.get_tool(&tool);
@@ -1149,7 +1177,7 @@ impl Buddaraysh<UdevData> {
                             self,
                             under.clone(),
                             &MotionEvent {
-                                location: pointer_location,
+                                location: pointer_location.as_logical(),
                                 serial: SERIAL_COUNTER.next_serial(),
                                 time: 0,
                             },
@@ -1163,7 +1191,7 @@ impl Buddaraysh<UdevData> {
                         ) {
                             match event.state() {
                                 ProximityState::In => tool.proximity_in(
-                                    pointer_location,
+                                    pointer_location.as_logical(),
                                     under,
                                     &tablet,
                                     SERIAL_COUNTER.next_serial(),
@@ -1215,7 +1243,9 @@ impl Buddaraysh<UdevData> {
                     if let Some(output) = output {
                         if let Some(workspace) = self.workspace_for_output(output) {
                             let output_geometry = output.geometry();
-                            let position = event.position_transformed(output_geometry.size)
+                            let position = event
+                                .position_transformed(output_geometry.size.as_logical())
+                                .as_global()
                                 + output_geometry.loc.to_f64();
                             if let Some((surface, surface_pos)) =
                                 Buddaraysh::<UdevData>::surface_under(
@@ -1231,7 +1261,7 @@ impl Buddaraysh<UdevData> {
                                     serial,
                                     time,
                                     &surface.wl_surface().unwrap(),
-                                    position_inside_surface,
+                                    position_inside_surface.as_logical(),
                                     event.slot(),
                                 );
                             }
@@ -1255,9 +1285,11 @@ impl Buddaraysh<UdevData> {
                     let output_geometry = self.outputs().next().map(|o| o.geometry());
 
                     if let Some(output_geometry) = output_geometry {
-                        let position = event.position_transformed(output_geometry.size)
+                        let position = event
+                            .position_transformed(output_geometry.size.as_logical())
+                            .as_global()
                             + output_geometry.loc.to_f64();
-                        touch.motion(event.time_msec(), event.slot(), position);
+                        touch.motion(event.time_msec(), event.slot(), position.as_logical());
                     }
                 }
             }
@@ -1295,7 +1327,7 @@ impl Buddaraysh<UdevData> {
         }
     }
 
-    fn clamp_coords(&self, pos: Point<f64, Logical>, output: &Output) -> Point<f64, Logical> {
+    fn clamp_coords(&self, pos: Point<f64, Global>, output: &Output) -> Point<f64, Global> {
         let (pos_x, pos_y) = pos.into();
         let max_x = self.outputs().fold(0, |acc, o| acc + o.geometry().size.w);
         let clamped_x = pos_x.clamp(0.0, max_x as f64);
@@ -1321,14 +1353,15 @@ impl Buddaraysh<UdevData> {
         if !self.pointer.is_grabbed() && (!keyboard.is_grabbed() || input_method.keyboard_grabbed())
         {
             let pointer = self.pointer.clone();
-            if let Some(output) = self.output_under(self.pointer.current_location()) {
+            if let Some(output) = self.output_under(self.pointer.current_location().as_global()) {
                 let Some(workspace) = self.current_workspace_for_output_mut(&output) else {
                     return;
                 };
                 let output_geo = output.geometry();
                 if let Some(fullscreen) = workspace.fullscreen.clone() {
                     if let Some((_, _)) = fullscreen.window.surface_under(
-                        pointer.current_location() - output_geo.loc.to_f64(),
+                        (pointer.current_location().as_global() - output_geo.loc.to_f64())
+                            .as_logical(),
                         WindowSurfaceType::ALL,
                     ) {
                         #[cfg(feature = "xwayland")]
@@ -1347,9 +1380,15 @@ impl Buddaraysh<UdevData> {
                 {
                     if layer.can_receive_keyboard_focus() {
                         if let Some((_, _)) = layer.surface_under(
-                            pointer.current_location()
-                                - output_geo.loc.to_f64()
-                                - layers.layer_geometry(layer).unwrap().loc.to_f64(),
+                            (pointer.current_location().as_global()
+                                - layers
+                                    .layer_geometry(layer)
+                                    .unwrap()
+                                    .as_local()
+                                    .to_global(&output)
+                                    .loc
+                                    .to_f64())
+                            .as_logical(),
                             WindowSurfaceType::ALL,
                         ) {
                             keyboard.set_focus(self, Some(layer.clone().into()), serial);
@@ -1360,7 +1399,7 @@ impl Buddaraysh<UdevData> {
                 drop(layers);
 
                 if let Some((window, _)) = workspace
-                    .window_under(pointer.current_location())
+                    .window_under(pointer.current_location().as_global())
                     .map(|(w, p)| (w.clone(), p))
                 {
                     workspace.raise_window(&window, true);
@@ -1382,9 +1421,15 @@ impl Buddaraysh<UdevData> {
                 {
                     if layer.can_receive_keyboard_focus() {
                         if let Some((_, _)) = layer.surface_under(
-                            self.pointer.current_location()
-                                - output_geo.loc.to_f64()
-                                - layers.layer_geometry(layer).unwrap().loc.to_f64(),
+                            (self.pointer.current_location().as_global()
+                                - layers
+                                    .layer_geometry(layer)
+                                    .unwrap()
+                                    .as_local()
+                                    .to_global(&output)
+                                    .loc
+                                    .to_f64())
+                            .as_logical(),
                             WindowSurfaceType::ALL,
                         ) {
                             keyboard.set_focus(self, Some(layer.clone().into()), serial);
