@@ -10,7 +10,7 @@ use std::{
 use smithay::{
     delegate_data_control, delegate_pointer_gestures, delegate_presentation,
     delegate_primary_selection, delegate_relative_pointer,
-    desktop::{layer_map_for_output, space::SpaceElement, PopupManager},
+    desktop::{layer_map_for_output, space::SpaceElement, PopupManager, WindowSurfaceType},
     input::{
         pointer::{CursorImageStatus, PointerHandle},
         Seat, SeatState,
@@ -26,7 +26,7 @@ use smithay::{
             Display, DisplayHandle,
         },
     },
-    utils::{Clock, Logical, Monotonic, Point, Rectangle},
+    utils::{Clock, Monotonic, Point, Rectangle},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
@@ -64,6 +64,7 @@ use smithay::{
 use crate::{
     cursor::Cursor,
     focus::FocusTarget,
+    utils::geometry::{Global, PointExt, PointGlobalExt, PointLocalExt},
     window::WindowElement,
     workspace::{Workspace, WorkspaceSet, Workspaces},
     Backend, CalloopData, OutputExt,
@@ -325,42 +326,59 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
     }
 
     pub fn surface_under(
-        pos: Point<f64, Logical>,
+        global_pos: Point<f64, Global>,
         output: &Output,
         workspace: &Workspace,
         override_redirect_windows: &[X11Surface],
-    ) -> Option<(FocusTarget, Point<i32, Logical>)> {
+    ) -> Option<(FocusTarget, Point<i32, Global>)> {
         let output_geo = output.geometry();
+        let relative_pos = global_pos.to_local(output);
         let layers = layer_map_for_output(output);
 
         if let Some(window) = &workspace.fullscreen {
             return Some((FocusTarget::Window(window.window.clone()), output_geo.loc));
         } else if let Some(layer) = layers
-            .layer_under(WlrLayer::Overlay, pos)
-            .or_else(|| layers.layer_under(WlrLayer::Top, pos))
+            .layer_under(WlrLayer::Overlay, relative_pos.as_logical())
+            .or_else(|| layers.layer_under(WlrLayer::Top, relative_pos.as_logical()))
         {
             let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-            return Some((layer.clone().into(), output_geo.loc + layer_loc));
+            if layer
+                .surface_under(
+                    relative_pos.as_logical() - layer_loc.to_f64(),
+                    WindowSurfaceType::ALL,
+                )
+                .is_some()
+            {
+                return Some((layer.clone().into(), output_geo.loc + layer_loc.as_global()));
+            }
         } else if let Some(or) = override_redirect_windows
             .iter()
-            .find(|or| or.is_in_input_region(&pos))
+            .find(|or| or.is_in_input_region(&global_pos.as_logical()))
         {
             let window = FocusTarget::Window(WindowElement::X11(or.clone()));
-            return Some((window, output_geo.loc + or.geometry().loc));
-        } else if let Some((window, location)) = workspace.window_under(pos) {
+            return Some((window, output_geo.loc + or.geometry().loc.as_global()));
+        } else if let Some((window, location)) = workspace.window_under(global_pos) {
             return Some((window.clone().into(), location));
         } else if let Some(layer) = layers
-            .layer_under(WlrLayer::Bottom, pos)
-            .or_else(|| layers.layer_under(WlrLayer::Background, pos))
+            .layer_under(WlrLayer::Bottom, global_pos.as_logical())
+            .or_else(|| layers.layer_under(WlrLayer::Background, global_pos.as_logical()))
         {
             let layer_loc = layers.layer_geometry(layer).unwrap().loc;
-            return Some((layer.clone().into(), output_geo.loc + layer_loc));
+            if layer
+                .surface_under(
+                    relative_pos.as_logical() - layer_loc.to_f64(),
+                    WindowSurfaceType::ALL,
+                )
+                .is_some()
+            {
+                return Some((layer.clone().into(), output_geo.loc + layer_loc.as_global()));
+            }
         }
 
         None
     }
 
-    pub fn output_under(&self, pos: Point<f64, Logical>) -> Option<Output> {
+    pub fn output_under(&self, pos: Point<f64, Global>) -> Option<Output> {
         let output = self
             .outputs()
             .find(|output| output.geometry().to_f64().contains(pos))
@@ -379,16 +397,16 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         )
     }
 
-    pub fn global_space(&self) -> Rectangle<i32, Logical> {
+    pub fn global_space(&self) -> Rectangle<i32, Global> {
         self.outputs()
             .fold(
-                Option::<Rectangle<i32, Logical>>::None,
+                Option::<Rectangle<i32, Global>>::None,
                 |maybe_geo, output| match maybe_geo {
                     Some(rect) => Some(rect.merge(output.geometry())),
                     None => Some(output.geometry()),
                 },
             )
-            .unwrap_or_default()
+            .unwrap_or_else(Rectangle::default)
     }
 
     pub fn workspace_for_mut(&mut self, window: &WindowElement) -> Option<&mut Workspace> {

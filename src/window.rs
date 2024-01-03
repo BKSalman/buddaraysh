@@ -55,7 +55,11 @@ use smithay::{
 };
 
 use super::ssd::HEADER_BAR_HEIGHT;
-use crate::{shell::layout::ManagedLayer, Backend, Buddaraysh};
+use crate::{
+    shell::layout::ManagedLayer,
+    utils::geometry::{Global, RectGlobalExt, SizeExt},
+    Backend, Buddaraysh,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum WindowElement {
@@ -330,13 +334,13 @@ impl WindowElement {
         }
     }
 
-    pub fn set_geometry(&self, geo: Rectangle<i32, Logical>) {
+    pub fn set_geometry(&self, geo: Rectangle<i32, Global>) {
         match self {
             WindowElement::Wayland(window) => window
                 .toplevel()
-                .with_pending_state(|state| state.size = Some(geo.size)),
+                .with_pending_state(|state| state.size = Some(geo.size.as_logical())),
             WindowElement::X11(surface) => {
-                let _ = surface.configure(geo);
+                let _ = surface.configure(geo.as_logical());
             }
         }
     }

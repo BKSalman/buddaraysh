@@ -1,4 +1,6 @@
-use crate::{focus::FocusTarget, window::WindowElement, Backend, Buddaraysh};
+use crate::{
+    focus::FocusTarget, utils::geometry::PointExt, window::WindowElement, Backend, Buddaraysh,
+};
 use smithay::{
     input::pointer::{
         AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
@@ -38,7 +40,7 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
         if !workspace.is_tiled(&self.window) {
             workspace.floating_layer.map_element(
                 self.window.clone(),
-                new_location.to_i32_round(),
+                new_location.to_i32_round().as_local(),
                 true,
             );
         } else {

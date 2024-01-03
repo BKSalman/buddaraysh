@@ -11,6 +11,7 @@ mod ssd;
 mod state;
 mod systemd;
 pub mod udev;
+pub mod utils;
 mod window;
 pub mod winit;
 mod workspace;
@@ -18,9 +19,11 @@ mod workspace;
 use smithay::{
     output::Output,
     reexports::wayland_server::{protocol::wl_surface::WlSurface, DisplayHandle},
-    utils::{Logical, Rectangle},
+    utils::Rectangle,
 };
 pub use state::Buddaraysh;
+use utils::geometry::Global;
+use utils::geometry::RectExt;
 
 // The button is a button code as defined in the
 // Linux kernel's linux/input-event-codes.h header file, e.g. BTN_LEFT.
@@ -51,11 +54,11 @@ pub enum Action {
 }
 
 pub trait OutputExt {
-    fn geometry(&self) -> Rectangle<i32, Logical>;
+    fn geometry(&self) -> Rectangle<i32, Global>;
 }
 
 impl OutputExt for Output {
-    fn geometry(&self) -> Rectangle<i32, Logical> {
+    fn geometry(&self) -> Rectangle<i32, Global> {
         Rectangle::from_loc_and_size(self.current_location(), {
             self.current_transform()
                 .transform_size(
@@ -67,5 +70,6 @@ impl OutputExt for Output {
                 .to_logical(self.current_scale().fractional_scale())
                 .to_i32_round()
         })
+        .as_global()
     }
 }

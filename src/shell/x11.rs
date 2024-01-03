@@ -26,6 +26,7 @@ use tracing::{error, trace};
 use crate::{
     focus::FocusTarget,
     grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
+    utils::geometry::{PointExt, PointLocalExt, RectExt, RectLocalExt, SizeExt},
     window::WindowElement,
     Backend, Buddaraysh, CalloopData, OutputExt,
 };
@@ -57,7 +58,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         let window = WindowElement::X11(surface);
         if let Some(output) = self
             .state
-            .output_under(self.state.pointer.current_location())
+            .output_under(self.state.pointer.current_location().as_global())
         {
             let location = self.state.pointer.current_location();
             if let Some(workspace) = self.state.workspace_for_output_mut(&output) {
@@ -210,6 +211,10 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
             None
         };
         if let Some(output) = output {
+            for workspace in self.state.workspaces.workspaces_mut() {
+                workspace.refresh();
+                workspace.tile_windows();
+            }
             self.state.backend_data.reset_buffers(&output);
         }
     }
@@ -332,8 +337,11 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
                 let loc = workspace.window_location(&window).unwrap();
                 let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
-                let initial_rect =
-                    Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
+                let initial_rect = Rectangle::from_loc_and_size(
+                    initial_window_location,
+                    // TODO: is this really local?
+                    initial_window_size.as_local(),
+                );
 
                 compositor::with_states(&window.wl_surface().unwrap(), |states| {
                     states
@@ -346,7 +354,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
 
                     *state.borrow_mut() = ResizeSurfaceState::Resizing {
                         edges: edges.into(),
-                        initial_rect,
+                        initial_rect: initial_rect.as_logical(),
                     };
                 });
 
@@ -356,7 +364,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
                     start_data,
                     window: window.clone(),
                     edges: edges.into(),
-                    initial_rect,
+                    initial_rect: initial_rect.as_logical(),
                     last_window_size: initial_window_size,
                 };
 
@@ -405,17 +413,20 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                         .get::<OldGeometry>()
                         .and_then(|data| data.restore())
                     {
-                        window.set_geometry(Rectangle::from_loc_and_size(
-                            initial_window_location,
-                            old_geo.size,
-                        ));
+                        window.set_geometry(
+                            Rectangle::from_loc_and_size(
+                                initial_window_location.as_logical(),
+                                old_geo.size,
+                            )
+                            .as_global(),
+                        );
                     }
                 }
 
                 let grab = MoveSurfaceGrab {
                     start_data,
                     window: window.clone(),
-                    initial_window_location,
+                    initial_window_location: initial_window_location.as_logical(),
                 };
 
                 let pointer = self.pointer.clone();

@@ -85,8 +85,7 @@ use smithay::{
         },
     },
     utils::{
-        Clock, DeviceFd, IsAlive, Logical, Monotonic, Physical, Point, Rectangle, Scale, Size,
-        Transform,
+        Clock, DeviceFd, IsAlive, Monotonic, Physical, Point, Rectangle, Scale, Size, Transform,
     },
     wayland::{
         compositor,
@@ -115,6 +114,7 @@ use crate::{
     protocols::screencopy::{frame::Screencopy, ScreencopyHandler, ScreencopyManagerState},
     render::{output_elements, CustomRenderElements},
     systemd,
+    utils::geometry::{Global, PointExt, PointGlobalExt, PointLocalExt},
     workspace::Workspace,
     Backend, Buddaraysh, CalloopData, OutputExt,
 };
@@ -1028,6 +1028,7 @@ impl Buddaraysh<UdevData> {
             let global = output.create_global::<Buddaraysh<UdevData>>(&self.display_handle);
 
             // TODO: make monitor location configurable
+            // this is inlined `self.global_space()` because borrow checker keeps screaming
             let w = self
                 .workspaces
                 .sets
@@ -1040,7 +1041,7 @@ impl Buddaraysh<UdevData> {
                         .map(|set| &set.output),
                 )
                 .fold(
-                    Option::<Rectangle<i32, Logical>>::None,
+                    Option::<Rectangle<i32, Global>>::None,
                     |maybe_geo, output| match maybe_geo {
                         Some(rect) => Some(rect.merge(output.geometry())),
                         None => Some(output.geometry()),
@@ -1551,7 +1552,7 @@ impl Buddaraysh<UdevData> {
             &mut renderer,
             workspaceset.1.current_workspace(),
             &output,
-            self.pointer.current_location(),
+            self.pointer.current_location().as_global(),
             &pointer_image,
             &mut self.backend_data.pointer_element,
             &self.dnd_icon,
@@ -1721,7 +1722,7 @@ fn render_surface<'a, 'b, 'c>(
     renderer: &mut UdevRenderer<'a, 'b, 'c>,
     workspace: &Workspace,
     output: &Output,
-    pointer_location: Point<f64, Logical>,
+    pointer_location: Point<f64, Global>,
     pointer_image: &TextureBuffer<MultiTexture>,
     pointer_element: &mut PointerElement<MultiTexture>,
     dnd_icon: &Option<wl_surface::WlSurface>,
@@ -1754,8 +1755,8 @@ fn render_surface<'a, 'b, 'c>(
         } else {
             (0, 0).into()
         };
-        let cursor_pos = pointer_location - output_geometry.loc.to_f64() - cursor_hotspot.to_f64();
-        let cursor_pos_scaled = cursor_pos.to_physical(scale).to_i32_round();
+        let cursor_pos = pointer_location - cursor_hotspot.to_f64().as_local().to_global(output);
+        let cursor_pos_scaled = cursor_pos.as_logical().to_physical(scale).to_i32_round();
 
         // set cursor
         pointer_element.set_texture(pointer_image.clone());
