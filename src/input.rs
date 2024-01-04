@@ -83,6 +83,15 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 && !modifiers.alt
                 && !modifiers.shift
                 && !modifiers.ctrl
+                && raw_syms.contains(&Keysym::v)
+            {
+                return Some(Action::ToggleFloating);
+            }
+
+            if modifiers.logo
+                && !modifiers.alt
+                && !modifiers.shift
+                && !modifiers.ctrl
                 && raw_syms.contains(&Keysym::q)
             {
                 return Some(Action::Spawn(String::from("kitty")));
@@ -250,7 +259,9 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                         return;
                     };
 
-                    let location = workspace.window_location(&window).unwrap();
+                    let location = workspace
+                        .window_location(&window)
+                        .unwrap_or(Point::from((0, 0)));
 
                     let managed_state = workspace.unmap_window(&window);
 
@@ -271,6 +282,27 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                             }
                         }
                     }
+                }
+            }
+            Action::ToggleFloating => {
+                let keyboard = self.seat.get_keyboard().unwrap();
+                let pointer = self.pointer.clone();
+
+                if pointer.is_grabbed() {
+                    let time = Instant::now().duration_since(self.start_time);
+                    pointer.unset_grab(self, SERIAL_COUNTER.next_serial(), time.as_millis() as u32);
+                }
+
+                if let Some(window) = keyboard
+                    .current_focus()
+                    .and_then(|t| t.wl_surface())
+                    .and_then(|s| self.window_for_surface(&s))
+                {
+                    let Some(workspace) = self.workspace_for_mut(&window) else {
+                        return;
+                    };
+
+                    workspace.toggle_floating(&window);
                 }
             }
             Action::None => {}
@@ -1378,15 +1410,10 @@ impl Buddaraysh<UdevData> {
                     .or_else(|| layers.layer_under(WlrLayer::Top, pointer.current_location()))
                 {
                     if layer.can_receive_keyboard_focus() {
+                        let layer_geom = layers.layer_geometry(layer).unwrap().as_local();
                         if let Some((_, _)) = layer.surface_under(
                             (pointer.current_location().as_global()
-                                - layers
-                                    .layer_geometry(layer)
-                                    .unwrap()
-                                    .as_local()
-                                    .to_global(&output)
-                                    .loc
-                                    .to_f64())
+                                - layer_geom.to_global(&output).loc.to_f64())
                             .as_logical(),
                             WindowSurfaceType::ALL,
                         ) {
@@ -1410,7 +1437,6 @@ impl Buddaraysh<UdevData> {
                     return;
                 }
 
-                let output_geo = output.geometry();
                 let layers = layer_map_for_output(&output);
                 if let Some(layer) = layers
                     .layer_under(WlrLayer::Bottom, self.pointer.current_location())
@@ -1419,15 +1445,10 @@ impl Buddaraysh<UdevData> {
                     })
                 {
                     if layer.can_receive_keyboard_focus() {
+                        let layer_geom = layers.layer_geometry(layer).unwrap().as_local();
                         if let Some((_, _)) = layer.surface_under(
                             (self.pointer.current_location().as_global()
-                                - layers
-                                    .layer_geometry(layer)
-                                    .unwrap()
-                                    .as_local()
-                                    .to_global(&output)
-                                    .loc
-                                    .to_f64())
+                                - layer_geom.to_global(&output).loc.to_f64())
                             .as_logical(),
                             WindowSurfaceType::ALL,
                         ) {
