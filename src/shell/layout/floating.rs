@@ -60,7 +60,7 @@ impl FloatingLayout {
 
     pub fn unmap_element(&mut self, window: &WindowElement) -> bool {
         let was_unmaped = self.space.elements().any(|e| e == window);
-        self.space.unmap_elem(&window);
+        self.space.unmap_elem(window);
 
         was_unmaped
     }

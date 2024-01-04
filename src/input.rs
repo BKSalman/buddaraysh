@@ -221,7 +221,6 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                     keyboard.set_focus(self, target.map(|(f, _)| f), serial);
                 } else {
                     warn!("workspace index does not exist");
-                    return;
                 }
             }
             Action::MoveToWorkspace(workspace_index) => {
