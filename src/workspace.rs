@@ -236,23 +236,6 @@ impl Workspace {
             .chain(self.tiling_layer.elements())
     }
 
-    pub fn change_window_geometry(
-        &mut self,
-        window: &WindowElement,
-        new_geo: Rectangle<i32, Logical>,
-    ) {
-        match window {
-            WindowElement::Wayland(w) => {
-                w.toplevel().with_pending_state(|state| {
-                    state.size = Some(new_geo.size);
-                });
-            }
-            WindowElement::X11(x11_surface) => {
-                let _ = x11_surface.configure(new_geo);
-            }
-        }
-    }
-
     pub fn set_output(&mut self, output: &Output, location: impl Into<Point<i32, Logical>>) {
         let old_output = self.tiling_layer.outputs().next().cloned();
         if let Some(old_output) = old_output {
@@ -313,14 +296,14 @@ impl Workspace {
     pub fn window_bbox(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
         self.floating_layer
             .element_bbox(window)
-            .or_else(|| self.tiling_layer.element_bbox(window))
+            .or(self.tiling_layer.element_bbox(window))
     }
 
     pub fn outputs_for_window(&self, window: &WindowElement) -> Vec<Output> {
         let mut outputs = self.floating_layer.outputs_for_element(window);
 
         if outputs.is_empty() {
-            outputs.extend(self.tiling_layer.outputs_for_element(window));
+            outputs = self.tiling_layer.outputs_for_element(window);
         }
 
         outputs
@@ -369,7 +352,7 @@ impl Workspace {
     pub fn window_location(&self, window: &WindowElement) -> Option<Point<i32, Local>> {
         self.floating_layer
             .element_location(window)
-            .or_else(|| self.tiling_layer.element_location(window))
+            .or(self.tiling_layer.element_location(window))
             .map(Point::as_local)
     }
 
@@ -433,5 +416,25 @@ impl Workspace {
 
     pub fn is_tiled(&self, window: &WindowElement) -> bool {
         self.tiling_layer.elements().any(|w| w == window)
+    }
+
+    pub fn toggle_floating(&mut self, window: &WindowElement) {
+        // TODO: deal with maximized windows when it's added
+        // if window.is_maximized(false) {
+        //     self.unmaximize_request(&window.active_window());
+        // }
+
+        if self.is_tiled(window) {
+            let window_location = self.window_location(window).unwrap_or(Point::from((0, 0)));
+            self.tiling_layer.unmap_element(window);
+            self.floating_layer
+                .map_element(window.clone(), window_location, true);
+        } else {
+            self.floating_layer.unmap_element(window);
+            self.tiling_layer.map_element(window.clone());
+        }
+
+        self.refresh();
+        self.tile_windows();
     }
 }

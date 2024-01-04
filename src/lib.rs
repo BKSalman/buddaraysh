@@ -45,6 +45,7 @@ pub trait Backend {
 
 #[derive(Debug, Clone)]
 pub enum Action {
+    ToggleFloating,
     Spawn(String),
     Quit,
     SwitchToWorkspace(usize),
