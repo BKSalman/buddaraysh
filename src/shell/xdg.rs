@@ -39,7 +39,7 @@ use crate::{
     grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
     shell::{layout::ManagedLayer, FullscreenSurface},
     utils::geometry::{PointExt, PointLocalExt, SizeExt},
-    window::WindowElement,
+    window::{WindowElement, WindowMapped},
     Backend, Buddaraysh, OutputExt,
 };
 
@@ -49,17 +49,16 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        let window = WindowElement::Wayland(Window::new(surface));
+        let window = WindowMapped::new(WindowElement::Wayland(Window::new(surface)), None);
         if let Some(output) = self.output_under(self.pointer.current_location().as_global()) {
-            if let Some(workspace) = self.current_workspace_for_output_mut(&output) {
-                workspace.map_window(window);
-                // place_new_window(
-                //     self.workspaces.current_workspace_mut().space_mut(),
-                //     self.pointer.current_location(),
-                //     &window,
-                //     true,
-                // );
-            }
+            let workspace = self.current_workspace_mut(&output);
+            workspace.map_window(window);
+            // place_new_window(
+            //     self.workspaces.current_workspace_mut().space_mut(),
+            //     self.pointer.current_location(),
+            //     &window,
+            //     true,
+            // );
         }
 
         for workspace in self.workspaces.workspaces_mut() {
@@ -196,9 +195,7 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
             //     self.workspaces.current_workspace_mut(),
             // );
 
-            let Some(workspace) = self.workspace_for_output(&output) else {
-                return;
-            };
+            let workspace = self.current_workspace(&output);
             let output_geometry = output.geometry();
             let client = self.display_handle.get_client(wl_surface.id()).unwrap();
             for output in output.client_outputs(&client) {
@@ -218,9 +215,7 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
             };
             trace!("Fullscreening: {:?}", window);
 
-            let Some(workspace) = self.workspace_for_output_mut(&output) else {
-                return;
-            };
+            let workspace = self.current_workspace_mut(&output);
             workspace.fullscreen = Some(FullscreenSurface {
                 window: window.clone(),
                 previously: Some((layer, workspace.handle)),
@@ -249,11 +244,10 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
         });
         if let Some(output) = ret {
             let output = Output::from_resource(&output).unwrap();
-            if let Some(workspace) = self.workspace_for_output_mut(&output) {
-                if let Some(fullscreen) = workspace.fullscreen.take() {
-                    trace!("Unfullscreening: {:?}", fullscreen);
-                    self.backend_data.reset_buffers(&output);
-                }
+            let workspace = self.current_workspace_mut(&output);
+            if let Some(fullscreen) = workspace.fullscreen.take() {
+                trace!("Unfullscreening: {:?}", fullscreen);
+                self.backend_data.reset_buffers(&output);
             }
         }
 
@@ -303,23 +297,25 @@ fn check_grab<BackendData: Backend + 'static>(
 /// Should be called on `WlSurface::commit`
 pub fn handle_commit(
     popups: &mut PopupManager,
-    window: Option<&WindowElement>,
+    window: Option<&WindowMapped>,
     surface: &WlSurface,
 ) {
     // Handle toplevel commits.
-    if let Some(WindowElement::Wayland(ref window)) = window {
-        let initial_configure_sent = with_states(surface, |states| {
-            states
-                .data_map
-                .get::<XdgToplevelSurfaceData>()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .initial_configure_sent
-        });
+    if let Some(w) = &window {
+        if let WindowElement::Wayland(window) = &w.element {
+            let initial_configure_sent = with_states(surface, |states| {
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .initial_configure_sent
+            });
 
-        if !initial_configure_sent {
-            window.toplevel().send_configure();
+            if !initial_configure_sent {
+                window.toplevel().send_configure();
+            }
         }
     }
 

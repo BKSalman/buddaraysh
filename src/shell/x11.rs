@@ -29,6 +29,8 @@ use crate::{
     shell::FullscreenSurface,
     ssd::HEADER_BAR_HEIGHT,
     window::WindowElement,
+    utils::geometry::{PointExt, PointLocalExt, RectExt, RectLocalExt, SizeExt},
+    window::{WindowElement, WindowMapped},
     Backend, Buddaraysh, CalloopData, OutputExt,
 };
 
@@ -56,16 +58,15 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         if !surface.is_override_redirect() {
             surface.set_mapped(true).unwrap();
         }
-        let window = WindowElement::X11(surface);
+        let window = WindowMapped::new(WindowElement::X11(surface), None);
         if let Some(output) = self
             .state
             .output_under(self.state.pointer.current_location().as_global())
         {
             let location = self.state.pointer.current_location();
-            if let Some(workspace) = self.state.workspace_for_output_mut(&output) {
-                workspace.map_window(window.clone());
-                window.set_ssd(!window.is_decorated(false));
-            }
+            let workspace = self.state.current_workspace_mut(&output);
+            workspace.map_window(window.clone());
+            window.set_ssd(!window.is_decorated(false));
         }
 
         for workspace in self.state.workspaces.workspaces_mut() {
@@ -84,14 +85,14 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         self.state.override_redirect_windows.push(surface.clone());
 
         let location = surface.geometry().loc;
-        let window = WindowElement::X11(surface);
+        let window = WindowMapped::new(WindowElement::X11(surface), None);
         if let Some(workspace) = self.state.workspace_for_mut(&window) {
             workspace.map_window(window);
         }
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, surface: X11Surface) {
-        let window = WindowElement::X11(surface.clone());
+        let window = WindowMapped::new(WindowElement::X11(surface.clone()), None);
         if let Some(workspace) = self.state.workspace_for_mut(&window) {
             let maybe = workspace.windows().find(|e| **e == window).cloned();
             if let Some(elem) = maybe {
@@ -109,7 +110,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     }
 
     fn destroyed_window(&mut self, _xwm: XwmId, surface: X11Surface) {
-        let window = WindowElement::X11(surface.clone());
+        let window = WindowMapped::new(WindowElement::X11(surface.clone()), None);
         if let Some(workspace) = self.state.workspace_for_mut(&window) {
             let maybe = workspace.windows().find(|e| **e == window).cloned();
             if let Some(window) = maybe {
@@ -197,7 +198,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     }
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        let window = WindowElement::X11(surface);
+        let window = WindowMapped::new(WindowElement::X11(surface), None);
         let output = if let Some(workspace) = self
             .state
             .window_for_surface(&window.wl_surface().unwrap())
@@ -241,10 +242,11 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     fn allow_selection_access(&mut self, xwm: XwmId, _selection: SelectionTarget) -> bool {
         if let Some(keyboard) = self.state.seat.get_keyboard() {
             // check that an X11 window is focused
-            if let Some(FocusTarget::Window(WindowElement::X11(surface))) = keyboard.current_focus()
-            {
-                if surface.xwm_id().unwrap() == xwm {
-                    return true;
+            if let Some(FocusTarget::Window(w)) = keyboard.current_focus() {
+                if let WindowElement::X11(surface) = w.element {
+                    if surface.xwm_id().unwrap() == xwm {
+                        return true;
+                    }
                 }
             }
         }
@@ -284,22 +286,23 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     fn new_selection(&mut self, xwm: XwmId, selection: SelectionTarget, mime_types: Vec<String>) {
         trace!(?selection, ?mime_types, "Got Selection from X11",);
         if let Some(keyboard) = self.state.seat.get_keyboard() {
-            if let Some(FocusTarget::Window(WindowElement::X11(surface))) = keyboard.current_focus()
-            {
-                if surface.xwm_id().unwrap() == xwm {
-                    match selection {
-                        SelectionTarget::Clipboard => set_data_device_selection(
-                            &self.state.display_handle,
-                            &self.state.seat,
-                            mime_types,
-                            (),
-                        ),
-                        SelectionTarget::Primary => set_primary_selection(
-                            &self.state.display_handle,
-                            &self.state.seat,
-                            mime_types,
-                            (),
-                        ),
+            if let Some(FocusTarget::Window(w)) = keyboard.current_focus() {
+                if let WindowElement::X11(surface) = w.element {
+                    if surface.xwm_id().unwrap() == xwm {
+                        match selection {
+                            SelectionTarget::Clipboard => set_data_device_selection(
+                                &self.state.display_handle,
+                                &self.state.seat,
+                                mime_types,
+                                (),
+                            ),
+                            SelectionTarget::Primary => set_primary_selection(
+                                &self.state.display_handle,
+                                &self.state.seat,
+                                mime_types,
+                                (),
+                            ),
+                        }
                     }
                 }
             }

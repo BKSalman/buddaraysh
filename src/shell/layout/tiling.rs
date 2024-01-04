@@ -7,19 +7,19 @@ use smithay::{
 
 use crate::{
     utils::geometry::{Global, PointExt, PointGlobalExt, PointLocalExt, RectExt, RectLocalExt},
-    window::WindowElement,
+    window::WindowMapped,
     workspace::Workspace,
     OutputExt,
 };
 
 #[derive(Default, Debug)]
 pub struct TilingLayout {
-    space: Space<WindowElement>,
+    space: Space<WindowMapped>,
     layout: Layout,
 }
 
 impl TilingLayout {
-    pub fn elements(&self) -> impl DoubleEndedIterator<Item = &WindowElement> {
+    pub fn elements(&self) -> impl DoubleEndedIterator<Item = &WindowMapped> {
         self.space.elements()
     }
 
@@ -27,7 +27,7 @@ impl TilingLayout {
         self.space.outputs()
     }
 
-    pub fn element_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
+    pub fn element_for_surface(&self, surface: &WlSurface) -> Option<WindowMapped> {
         self.space
             .elements()
             .find(|element| element.wl_surface().map(|s| s == *surface).unwrap_or(false))
@@ -45,11 +45,11 @@ impl TilingLayout {
     pub fn element_under(
         &self,
         pos: impl Into<Point<f64, Logical>>,
-    ) -> Option<(&WindowElement, Point<i32, Logical>)> {
+    ) -> Option<(&WindowMapped, Point<i32, Logical>)> {
         self.space.element_under(pos)
     }
 
-    pub fn element_bbox(&self, element: &WindowElement) -> Option<Rectangle<i32, Logical>> {
+    pub fn element_bbox(&self, element: &WindowMapped) -> Option<Rectangle<i32, Logical>> {
         self.space.element_bbox(element)
     }
 
@@ -57,11 +57,11 @@ impl TilingLayout {
         self.space.output_geometry(output)
     }
 
-    pub fn outputs_for_element(&self, element: &WindowElement) -> Vec<Output> {
+    pub fn outputs_for_element(&self, element: &WindowMapped) -> Vec<Output> {
         self.space.outputs_for_element(element)
     }
 
-    pub fn unmap_element(&mut self, window: &WindowElement) -> bool {
+    pub fn unmap_element(&mut self, window: &WindowMapped) -> bool {
         let was_unmaped = self.space.elements().any(|e| e == window);
         self.space.unmap_elem(window);
 
@@ -75,11 +75,11 @@ impl TilingLayout {
         self.space.output_under(point)
     }
 
-    pub fn element_location(&self, window: &WindowElement) -> Option<Point<i32, Logical>> {
+    pub fn element_location(&self, window: &WindowMapped) -> Option<Point<i32, Logical>> {
         self.space.element_location(window)
     }
 
-    pub fn map_element(&mut self, window: WindowElement) {
+    pub fn map_element(&mut self, window: WindowMapped) {
         self.space.map_element(window, Point::from((0, 0)), true);
     }
 
@@ -87,8 +87,12 @@ impl TilingLayout {
         self.space.refresh();
     }
 
-    pub fn space(&self) -> &Space<WindowElement> {
+    pub fn space(&self) -> &Space<WindowMapped> {
         &self.space
+    }
+
+    pub fn space_mut(&mut self) -> &mut Space<WindowMapped> {
+        &mut self.space
     }
 }
 
@@ -100,9 +104,10 @@ pub enum Layout {
 
 impl Workspace {
     pub fn tile_windows(&mut self) {
+        // TODO: add window weights for size calculation
         let op_geo = self.output.geometry();
         let output = self.output.clone();
-        let mut map = layer_map_for_output(&output);
+        let map = layer_map_for_output(&output);
         let geo = if map.layers().peekable().peek().is_none() {
             // INFO: Sometimes the exclusive zone is some weird number that doesn't match the
             // |     output res, even when there are no layer surfaces mapped. In this case, we

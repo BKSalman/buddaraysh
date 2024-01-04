@@ -1,5 +1,5 @@
 use crate::{
-    focus::FocusTarget, utils::geometry::PointExt, window::WindowElement, Backend, Buddaraysh,
+    focus::FocusTarget, utils::geometry::PointExt, window::WindowMapped, Backend, Buddaraysh,
 };
 use smithay::{
     input::pointer::{
@@ -13,7 +13,7 @@ use smithay::{
 
 pub struct MoveSurfaceGrab<BackendData: Backend + 'static> {
     pub start_data: PointerGrabStartData<Buddaraysh<BackendData>>,
-    pub window: WindowElement,
+    pub window: WindowMapped,
     pub initial_window_location: Point<i32, Logical>,
 }
 

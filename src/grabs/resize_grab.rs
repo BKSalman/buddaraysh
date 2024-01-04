@@ -1,6 +1,9 @@
 use crate::{
-    focus::FocusTarget, window::WindowElement, workspace::Workspace, Backend, Buddaraysh, BTN_LEFT,
-    BTN_RIGHT,
+    focus::FocusTarget,
+    utils::geometry::PointLocalExt,
+    window::{WindowElement, WindowMapped},
+    workspace::Workspace,
+    Backend, Buddaraysh, BTN_LEFT, BTN_RIGHT,
 };
 use smithay::{
     desktop::space::SpaceElement,
@@ -61,7 +64,7 @@ impl From<xwm::ResizeEdge> for ResizeEdge {
 
 pub struct ResizeSurfaceGrab<BackendData: Backend + 'static> {
     pub start_data: PointerGrabStartData<Buddaraysh<BackendData>>,
-    pub window: WindowElement,
+    pub window: WindowMapped,
 
     pub edges: ResizeEdge,
 
@@ -87,9 +90,24 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
         let mut new_window_width = self.initial_rect.size.w;
         let mut new_window_height = self.initial_rect.size.h;
 
+        let Some(workspace) = data.workspace_for(&self.window) else {
+            return;
+        };
+
         if self.edges.intersects(ResizeEdge::LEFT | ResizeEdge::RIGHT) {
             if self.edges.intersects(ResizeEdge::LEFT) {
                 delta.x = -delta.x;
+                if let Some(last_window) = workspace.tiling_layer.elements().next() {
+                    if *last_window == self.window {
+                        delta.x = 0.;
+                    }
+                }
+            } else {
+                if let Some(last_window) = workspace.tiling_layer.elements().last() {
+                    if *last_window == self.window {
+                        delta.x = 0.;
+                    }
+                }
             }
 
             new_window_width = (self.initial_rect.size.w as f64 + delta.x) as i32;
@@ -123,32 +141,35 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
             new_window_height.clamp(min_height, max_height),
         ));
 
-        let Some(workspace) = data.workspace_for(&self.window) else {
-            return;
-        };
-
-        if !workspace.is_tiled(&self.window) {
-            match &self.window {
-                WindowElement::Wayland(w) => {
-                    let xdg = w.toplevel();
-                    xdg.with_pending_state(|state| {
-                        state.states.set(xdg_toplevel::State::Resizing);
-                        state.size = Some(self.last_window_size);
-                    });
-                    xdg.send_pending_configure();
-                }
-                #[cfg(feature = "xwayland")]
-                WindowElement::X11(x11) => {
-                    x11.configure(Rectangle::from_loc_and_size(
-                        x11.geometry().loc,
-                        self.last_window_size,
-                    ))
-                    .expect("configure");
+        if workspace.is_tiled(&self.window) {
+            if let Some(master) = workspace.tiling_layer.elements().next() {
+                if *master == self.window {
+                    self.last_window_size.h = self.window.geometry().size.h;
                 }
             }
-        } else {
-            tracing::info!("lmao");
-            handle.unset_grab(data, event.serial, event.time, true);
+            if let Some(last_window) = workspace.tiling_layer.elements().last() {
+                if *last_window == self.window {
+                    self.last_window_size.h = self.window.geometry().size.h;
+                }
+            }
+        }
+        match &self.window.element {
+            WindowElement::Wayland(w) => {
+                let xdg = w.toplevel();
+                xdg.with_pending_state(|state| {
+                    state.states.set(xdg_toplevel::State::Resizing);
+                    state.size = Some(self.last_window_size);
+                });
+                xdg.send_pending_configure();
+            }
+            #[cfg(feature = "xwayland")]
+            WindowElement::X11(x11) => {
+                x11.configure(Rectangle::from_loc_and_size(
+                    x11.geometry().loc,
+                    self.last_window_size,
+                ))
+                .expect("configure");
+            }
         }
     }
 
@@ -182,6 +203,23 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
             }
 
             match &self.window {
+            let Some(workspace) = data.workspace_for(&self.window) else {
+                return;
+            };
+
+            if workspace.is_tiled(&self.window) {
+                if let Some(master) = workspace.tiling_layer.elements().next() {
+                    if *master == self.window {
+                        self.last_window_size.h = self.window.geometry().size.h;
+                    }
+                }
+                if let Some(last_window) = workspace.tiling_layer.elements().last() {
+                    if *last_window == self.window {
+                        self.last_window_size.h = self.window.geometry().size.h;
+                    }
+                }
+            }
+            match &self.window.element {
                 WindowElement::Wayland(w) => {
                     let xdg = w.toplevel();
                     xdg.with_pending_state(|state| {
@@ -371,10 +409,7 @@ impl ResizeSurfaceState {
 
 /// Should be called on `WlSurface::commit`
 pub fn handle_commit(workspace: &mut Workspace, surface: &WlSurface) -> Option<()> {
-    let window = workspace
-        .windows()
-        .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
-        .cloned()?;
+    let window = workspace.window_for_surface(surface)?;
 
     let mut window_loc = workspace.window_location(&window)?;
     let geometry = window.geometry();
@@ -409,13 +444,20 @@ pub fn handle_commit(workspace: &mut Workspace, surface: &WlSurface) -> Option<(
 
     if new_loc.x.is_some() || new_loc.y.is_some() {
         // If TOP or LEFT side of the window got resized, we have to move it
-        // TODO: add tiling resizing
         if !workspace.is_tiled(&window) {
             workspace
                 .floating_layer
-                .map_element(window, window_loc, false);
+                .map_element(window, window_loc, true);
         } else {
-            // workspace.tiling_layer.unmap_element(&window);
+            if let Some(last_window) = workspace.tiling_layer.elements().last() {
+                if *last_window == window {
+                    workspace.tiling_layer.space_mut().map_element(
+                        window,
+                        window_loc.as_logical(),
+                        true,
+                    );
+                }
+            }
         }
     }
 
