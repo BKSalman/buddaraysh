@@ -65,7 +65,7 @@ use crate::{
     cursor::Cursor,
     focus::FocusTarget,
     utils::geometry::{Global, PointExt, PointGlobalExt, PointLocalExt},
-    window::WindowElement,
+    window::{WindowElement, WindowMapped},
     workspace::{Workspace, WorkspaceSet, Workspaces},
     Backend, CalloopData, OutputExt,
 };
@@ -355,7 +355,8 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             .iter()
             .find(|or| or.is_in_input_region(&global_pos.as_logical()))
         {
-            let window = FocusTarget::Window(WindowElement::X11(or.clone()));
+            let window =
+                FocusTarget::Window(WindowMapped::new(WindowElement::X11(or.clone()), None));
             return Some((window, output_geo.loc + or.geometry().loc.as_global()));
         } else if let Some((window, location)) = workspace.window_under(global_pos) {
             return Some((window.clone().into(), location));
@@ -403,57 +404,24 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             .unwrap_or_else(Rectangle::default)
     }
 
-    pub fn workspace_for_mut(&mut self, window: &WindowElement) -> Option<&mut Workspace> {
+    pub fn workspace_for_mut(&mut self, window: &WindowMapped) -> Option<&mut Workspace> {
         self.workspaces
             .workspaces_mut()
             .find(|workspace| workspace.windows().any(|m| m == window))
     }
 
-    pub fn workspace_for(&mut self, window: &WindowElement) -> Option<&Workspace> {
+    pub fn workspace_for(&mut self, window: &WindowMapped) -> Option<&Workspace> {
         self.workspaces
             .workspaces()
             .find(|workspace| workspace.windows().any(|m| m == window))
     }
 
-    pub fn workspace_for_output_mut(&mut self, output: &Output) -> Option<&mut Workspace> {
-        // TODO: should I get the current workspace instead?
-        self.workspaces
-            .workspaces_mut()
-            .find(|workspace| workspace.output == *output)
+    pub fn current_workspace_mut(&mut self, output: &Output) -> &mut Workspace {
+        self.workspaces.current_workspace_mut(output)
     }
 
-    pub fn current_workspace_for_output_mut(&mut self, output: &Output) -> Option<&mut Workspace> {
-        self.workspaces
-            .sets
-            .iter_mut()
-            .find(|workspaceset| {
-                workspaceset
-                    .1
-                    .workspaces()
-                    .iter_mut()
-                    .any(|w| w.output == *output)
-            })
-            .map(|ws| ws.1.current_workspace_mut())
-    }
-
-    pub fn current_workspace_for_output(&self, output: &Output) -> Option<&Workspace> {
-        self.workspaces
-            .sets
-            .iter()
-            .find(|workspaceset| {
-                workspaceset
-                    .1
-                    .workspaces()
-                    .iter()
-                    .any(|w| w.output == *output)
-            })
-            .map(|ws| ws.1.current_workspace())
-    }
-
-    pub fn workspace_for_output(&self, output: &Output) -> Option<&Workspace> {
-        self.workspaces
-            .workspaces()
-            .find(|workspace| workspace.output == *output)
+    pub fn current_workspace(&self, output: &Output) -> &Workspace {
+        self.workspaces.current_workspace(output)
     }
 
     pub fn workspaceset_for_output(&self, output: &Output) -> Option<(&Output, &WorkspaceSet)> {
@@ -466,7 +434,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         })
     }
 
-    pub fn workspaceset_for(&self, window: &WindowElement) -> Option<&WorkspaceSet> {
+    pub fn workspaceset_for(&self, window: &WindowMapped) -> Option<&WorkspaceSet> {
         self.workspaces.workspacesets().find(|workspaceset| {
             workspaceset
                 .workspaces()
@@ -475,7 +443,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         })
     }
 
-    pub fn workspaceset_for_mut(&mut self, window: &WindowElement) -> Option<&mut WorkspaceSet> {
+    pub fn workspaceset_for_mut(&mut self, window: &WindowMapped) -> Option<&mut WorkspaceSet> {
         self.workspaces.workspacesets_mut().find(|workspaceset| {
             workspaceset
                 .workspaces()
@@ -484,7 +452,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         })
     }
 
-    pub fn windows(&self) -> impl Iterator<Item = &WindowElement> {
+    pub fn windows(&self) -> impl Iterator<Item = &WindowMapped> {
         self.workspaces.workspaces().flat_map(|w| w.windows())
     }
 }

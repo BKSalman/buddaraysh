@@ -13,9 +13,9 @@ use smithay::{
 
 use std::cell::{RefCell, RefMut};
 
-use crate::Buddaraysh;
+use crate::{window::WindowElement, Buddaraysh};
 
-use crate::window::WindowElement;
+use crate::window::WindowMapped;
 
 pub struct WindowState {
     pub is_ssd: bool,
@@ -57,12 +57,12 @@ impl HeaderBar {
         &mut self,
         seat: &Seat<Buddaraysh<B>>,
         state: &mut Buddaraysh<B>,
-        window: &WindowElement,
+        window: &WindowMapped,
         serial: Serial,
     ) {
         match self.pointer_loc.as_ref() {
             Some(loc) if loc.x >= (self.width - BUTTON_WIDTH) as f64 => {
-                match window {
+                match &window.element {
                     WindowElement::Wayland(w) => w.toplevel().send_close(),
                     #[cfg(feature = "xwayland")]
                     WindowElement::X11(w) => {
@@ -71,7 +71,7 @@ impl HeaderBar {
                 };
             }
             Some(loc) if loc.x >= (self.width - (BUTTON_WIDTH * 2)) as f64 => {
-                match window {
+                match &window.element {
                     WindowElement::Wayland(w) => state.maximize_request(w.toplevel().clone()),
                     #[cfg(feature = "xwayland")]
                     WindowElement::X11(w) => {
@@ -83,7 +83,7 @@ impl HeaderBar {
                 };
             }
             Some(_) => {
-                match window {
+                match &window.element {
                     WindowElement::Wayland(w) => {
                         let seat = seat.clone();
                         let toplevel = w.toplevel().clone();
@@ -221,7 +221,7 @@ impl<R: Renderer> AsRenderElements<R> for HeaderBar {
     }
 }
 
-impl WindowElement {
+impl WindowMapped {
     pub fn decoration_state(&self) -> RefMut<'_, WindowState> {
         self.user_data().insert_if_missing(|| {
             RefCell::new(WindowState {

@@ -12,7 +12,7 @@ use crate::{
         FullscreenSurface,
     },
     utils::geometry::{Global, Local, PointExt, PointGlobalExt, PointLocalExt, RectExt},
-    window::WindowElement,
+    window::WindowMapped,
     OutputExt,
 };
 
@@ -58,17 +58,28 @@ impl Workspaces {
         self.sets.values().flat_map(|set| set.workspaces.iter())
     }
 
+    pub fn current_workspace(&self, output: &Output) -> &Workspace {
+        let set = self.sets.get(output).or(self.backup_set.as_ref()).unwrap();
+        &set.workspaces[set.current]
+    }
+
+    pub fn current_workspace_mut(&mut self, output: &Output) -> &mut Workspace {
+        let set = self
+            .sets
+            .get_mut(output)
+            .or(self.backup_set.as_mut())
+            .unwrap();
+        &mut set.workspaces[set.current]
+    }
+
     /// Sets the current workspace, and returns Some if the provided index exists, or None if it doesn't exist
     pub fn set_current_workspace(
         &mut self,
         output: &Output,
         workspace_index: usize,
     ) -> Option<&Workspace> {
-        if let Some(workspace) = self.sets.get_mut(output).or(self.backup_set.as_mut()) {
-            return workspace.set_current_workspace(workspace_index);
-        }
-
-        None
+        let workspace = self.sets.get_mut(output).or(self.backup_set.as_mut())?;
+        workspace.set_current_workspace(workspace_index)
     }
 
     /// Sets the current workspace, and returns Some if the provided index exists, or None if it doesn't exist
@@ -77,11 +88,8 @@ impl Workspaces {
         output: &Output,
         workspace_index: usize,
     ) -> Option<&mut Workspace> {
-        if let Some(workspace) = self.sets.get_mut(output).or(self.backup_set.as_mut()) {
-            return workspace.set_current_workspace_mut(workspace_index);
-        }
-
-        None
+        let workspace = self.sets.get_mut(output).or(self.backup_set.as_mut())?;
+        workspace.set_current_workspace_mut(workspace_index)
     }
 
     pub fn workspacesets_mut(&mut self) -> impl Iterator<Item = &mut WorkspaceSet> {
@@ -147,32 +155,16 @@ impl WorkspaceSet {
         self.workspaces.iter().collect()
     }
 
-    // pub fn output_under(
-    //     &self,
-    //     point: impl Into<Point<f64, Logical>>,
-    // ) -> impl Iterator<Item = &Output> {
-    //     let point: Point<f64, Logical> = point.into();
-    //     self.workspaces
-    //         .iter()
-    //         .flat_map(move |w| w.output_under(point))
-    // }
-
     pub fn workspaces_mut(&mut self) -> Vec<&mut Workspace> {
         self.workspaces.iter_mut().collect()
     }
 
-    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
+    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowMapped> {
         self.workspaces
             .iter()
             .flat_map(|w| w.window_for_surface(surface))
             .next()
     }
-
-    // pub fn outputs(&self) -> impl Iterator<Item = &Output> {
-    //     // should be fine to only get outputs from 1 workspace
-    //     // since all outputs are added to all workspaces
-    //     self.workspaces[self.current].outputs()
-    // }
 
     pub fn current_workspace_index(&self) -> usize {
         self.current
@@ -197,13 +189,13 @@ impl WorkspaceSet {
         self.workspaces[self.current].refresh()
     }
 
-    pub fn workspace_for(&self, window: &WindowElement) -> Option<&Workspace> {
+    pub fn workspace_for(&self, window: &WindowMapped) -> Option<&Workspace> {
         self.workspaces
             .iter()
             .find(|w| w.windows().any(|e| e == window))
     }
 
-    pub fn workspace_for_mut(&mut self, window: &WindowElement) -> Option<&mut Workspace> {
+    pub fn workspace_for_mut(&mut self, window: &WindowMapped) -> Option<&mut Workspace> {
         self.workspaces
             .iter_mut()
             .find(|w| w.windows().any(|e| e == window))
@@ -230,7 +222,7 @@ impl Workspace {
         }
     }
 
-    pub fn windows(&self) -> impl DoubleEndedIterator<Item = &WindowElement> {
+    pub fn windows(&self) -> impl DoubleEndedIterator<Item = &WindowMapped> {
         self.floating_layer
             .elements()
             .chain(self.tiling_layer.elements())
@@ -257,15 +249,13 @@ impl Workspace {
         self.refresh();
     }
 
-    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
-        self.floating_layer
-            .elements()
-            .chain(self.tiling_layer.elements())
+    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowMapped> {
+        self.windows()
             .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
             .cloned()
     }
 
-    pub fn window_for_element(&self, window: &WindowElement) -> Option<WindowElement> {
+    pub fn window_for_element(&self, window: &WindowMapped) -> Option<WindowMapped> {
         self.floating_layer
             .elements()
             .chain(self.tiling_layer.elements())
@@ -280,7 +270,7 @@ impl Workspace {
     pub fn window_under(
         &self,
         location: Point<f64, Global>,
-    ) -> Option<(WindowElement, Point<i32, Global>)> {
+    ) -> Option<(WindowMapped, Point<i32, Global>)> {
         let location = location.to_local(&self.output);
         self.floating_layer
             .element_under(location.as_logical())
@@ -293,13 +283,13 @@ impl Workspace {
             .map(|(w, p)| (w, p.to_global(&self.output)))
     }
 
-    pub fn window_bbox(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
+    pub fn window_bbox(&self, window: &WindowMapped) -> Option<Rectangle<i32, Logical>> {
         self.floating_layer
             .element_bbox(window)
             .or(self.tiling_layer.element_bbox(window))
     }
 
-    pub fn outputs_for_window(&self, window: &WindowElement) -> Vec<Output> {
+    pub fn outputs_for_window(&self, window: &WindowMapped) -> Vec<Output> {
         let mut outputs = self.floating_layer.outputs_for_element(window);
 
         if outputs.is_empty() {
@@ -309,7 +299,7 @@ impl Workspace {
         outputs
     }
 
-    pub fn map_window(&mut self, window: WindowElement) {
+    pub fn map_window(&mut self, window: WindowMapped) {
         if layout::should_be_floating(&window) {
             let output_size = self.output.geometry().size;
             let window_size = window.geometry().size;
@@ -326,7 +316,7 @@ impl Workspace {
         }
     }
 
-    pub fn unmap_window(&mut self, window: &WindowElement) -> Option<ManagedState> {
+    pub fn unmap_window(&mut self, window: &WindowMapped) -> Option<ManagedState> {
         let was_floating = self.floating_layer.unmap_element(window);
         let was_tiled = self.tiling_layer.unmap_element(window);
 
@@ -349,14 +339,14 @@ impl Workspace {
         }
     }
 
-    pub fn window_location(&self, window: &WindowElement) -> Option<Point<i32, Local>> {
+    pub fn window_location(&self, window: &WindowMapped) -> Option<Point<i32, Local>> {
         self.floating_layer
             .element_location(window)
             .or(self.tiling_layer.element_location(window))
             .map(Point::as_local)
     }
 
-    pub fn raise_window(&mut self, window: &WindowElement, activate: bool) {
+    pub fn raise_window(&mut self, window: &WindowMapped, activate: bool) {
         self.floating_layer.raise_element(window, activate);
     }
 
@@ -381,7 +371,7 @@ impl Workspace {
 
     pub fn fullscreen_request(
         &mut self,
-        window: &WindowElement,
+        window: &WindowMapped,
         previously: Option<(ManagedLayer, usize)>,
     ) {
         let output = self.output.clone();
@@ -399,10 +389,7 @@ impl Workspace {
         });
     }
 
-    pub fn unfullscreen_request(
-        &mut self,
-        window: &WindowElement,
-    ) -> Option<(ManagedLayer, usize)> {
+    pub fn unfullscreen_request(&mut self, window: &WindowMapped) -> Option<(ManagedLayer, usize)> {
         if let Some(f) = self.fullscreen.clone().filter(|f| &f.window == window) {
             window.set_fullscreen(false);
             window.set_geometry(f.original_geometry.as_global());
@@ -414,11 +401,11 @@ impl Workspace {
         }
     }
 
-    pub fn is_tiled(&self, window: &WindowElement) -> bool {
+    pub fn is_tiled(&self, window: &WindowMapped) -> bool {
         self.tiling_layer.elements().any(|w| w == window)
     }
 
-    pub fn toggle_floating(&mut self, window: &WindowElement) {
+    pub fn toggle_floating(&mut self, window: &WindowMapped) {
         // TODO: deal with maximized windows when it's added
         // if window.is_maximized(false) {
         //     self.unmaximize_request(&window.active_window());

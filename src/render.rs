@@ -11,7 +11,7 @@ use smithay::{
 use crate::drawing::FpsElement;
 use crate::{
     drawing::{PointerRenderElement, CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN},
-    window::{WindowElement, WindowRenderElement},
+    window::{WindowMapped, WindowRenderElement},
     workspace::Workspace,
 };
 
@@ -172,7 +172,7 @@ where
         //     output_render_elements.extend(space_preview_elements(renderer, space, output));
         // }
 
-        let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(
+        let space_elements = smithay::desktop::space::space_render_elements::<_, WindowMapped, _>(
             renderer,
             [
                 workspace.floating_layer.space(),
