@@ -1541,8 +1541,7 @@ impl Buddaraysh<UdevData> {
                 .1
                 .workspaces()
                 .iter()
-                .find(|w| w.output == *output)
-                .is_some()
+                .any(|w| w.output == *output)
         }) else {
             return;
         };
@@ -1551,7 +1550,7 @@ impl Buddaraysh<UdevData> {
             surface,
             &mut renderer,
             workspaceset.1.current_workspace(),
-            &output,
+            output,
             self.pointer.current_location().as_global(),
             &pointer_image,
             &mut self.backend_data.pointer_element,

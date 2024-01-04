@@ -64,11 +64,7 @@ impl Workspaces {
         output: &Output,
         workspace_index: usize,
     ) -> Option<&Workspace> {
-        if let Some(workspace) = self
-            .sets
-            .get_mut(output)
-            .or_else(|| self.backup_set.as_mut())
-        {
+        if let Some(workspace) = self.sets.get_mut(output).or(self.backup_set.as_mut()) {
             return workspace.set_current_workspace(workspace_index);
         }
 
@@ -81,11 +77,7 @@ impl Workspaces {
         output: &Output,
         workspace_index: usize,
     ) -> Option<&mut Workspace> {
-        if let Some(workspace) = self
-            .sets
-            .get_mut(output)
-            .or_else(|| self.backup_set.as_mut())
-        {
+        if let Some(workspace) = self.sets.get_mut(output).or(self.backup_set.as_mut()) {
             return workspace.set_current_workspace_mut(workspace_index);
         }
 
@@ -262,11 +254,11 @@ impl Workspace {
     }
 
     pub fn set_output(&mut self, output: &Output, location: impl Into<Point<i32, Logical>>) {
-        let old_output = self.tiling_layer.outputs().cloned().next();
+        let old_output = self.tiling_layer.outputs().next().cloned();
         if let Some(old_output) = old_output {
             self.tiling_layer.unmap_output(&old_output);
         }
-        let old_output = self.floating_layer.outputs().cloned().next();
+        let old_output = self.floating_layer.outputs().next().cloned();
         if let Some(old_output) = old_output {
             self.floating_layer.unmap_output(&old_output);
         }

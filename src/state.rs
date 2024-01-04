@@ -379,22 +379,16 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
     }
 
     pub fn output_under(&self, pos: Point<f64, Global>) -> Option<Output> {
-        let output = self
-            .outputs()
+        self.outputs()
             .find(|output| output.geometry().to_f64().contains(pos))
-            .cloned()?;
-
-        Some(output)
+            .cloned()
     }
 
     pub fn outputs(&self) -> impl DoubleEndedIterator<Item = &smithay::output::Output> {
-        self.workspaces.sets.keys().chain(
-            self.workspaces
-                .backup_set
-                .as_ref()
-                .into_iter()
-                .map(|set| &set.output),
-        )
+        self.workspaces
+            .sets
+            .keys()
+            .chain(self.workspaces.backup_set.iter().map(|set| &set.output))
     }
 
     pub fn global_space(&self) -> Rectangle<i32, Global> {
@@ -437,8 +431,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
                     .1
                     .workspaces()
                     .iter_mut()
-                    .find(|w| w.output == *output)
-                    .is_some()
+                    .any(|w| w.output == *output)
             })
             .map(|ws| ws.1.current_workspace_mut())
     }
@@ -452,8 +445,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
                     .1
                     .workspaces()
                     .iter()
-                    .find(|w| w.output == *output)
-                    .is_some()
+                    .any(|w| w.output == *output)
             })
             .map(|ws| ws.1.current_workspace())
     }
@@ -470,8 +462,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
                 .1
                 .workspaces()
                 .iter()
-                .find(|w| w.output == *output)
-                .is_some()
+                .any(|w| w.output == *output)
         })
     }
 
@@ -480,8 +471,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             workspaceset
                 .workspaces()
                 .iter()
-                .find(|w| w.windows().any(|m| m == window))
-                .is_some()
+                .any(|w| w.windows().any(|m| m == window))
         })
     }
 
@@ -490,8 +480,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             workspaceset
                 .workspaces()
                 .iter()
-                .find(|w| w.windows().any(|m| m == window))
-                .is_some()
+                .any(|w| w.windows().any(|m| m == window))
         })
     }
 
