@@ -23,7 +23,7 @@ libsystemd = "0.7.0"
 default-features = false
 version = "0.3.0"
 git = "https://github.com/Smithay/smithay"
-rev = "3f491eb"
+rev = "77686d7"
 features = ["desktop", "wayland_frontend"]
 
 [dependencies.x11rb]
