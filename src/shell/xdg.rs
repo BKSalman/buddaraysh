@@ -431,13 +431,11 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
             .zip(self.workspaces.current_workspace().outputs().next())
         {
             self.unconstrain_window_popup(popup, &window, output);
-        } else if let Some((layer_surface, output)) =
-            self.workspaces.current_workspace().outputs().find_map(|o| {
-                let map = layer_map_for_output(o);
-                let layer_surface = map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)?;
-                Some((layer_surface.clone(), o))
-            })
-        {
+        } else if let Some((layer_surface, output)) = self.workspaces.outputs().find_map(|o| {
+            let map = layer_map_for_output(o);
+            let layer_surface = map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)?;
+            Some((layer_surface.clone(), o))
+        }) {
             self.unconstrain_layer_shell_popup(popup, &layer_surface, output);
         }
     }
@@ -452,8 +450,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         let output_geo = workspace.output_geometry(output).unwrap();
         let window_location = workspace.window_location(window).unwrap();
 
-        let mut target =
-            Rectangle::from_loc_and_size((0, 0), (output_geo.size.w, output_geo.size.h));
+        let mut target = Rectangle::from_loc_and_size((0, 0), output_geo.size);
         target.loc -= window_location;
         target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
 

@@ -6,7 +6,10 @@ use smithay::{
     output::Output,
     reexports::wayland_server::protocol::wl_output::WlOutput,
     utils::SERIAL_COUNTER,
-    wayland::shell::wlr_layer::{Layer as WlrLayer, LayerSurface, WlrLayerShellHandler},
+    wayland::shell::{
+        wlr_layer::{Layer as WlrLayer, LayerSurface, WlrLayerShellHandler},
+        xdg::PopupSurface,
+    },
 };
 
 use crate::{Backend, Buddaraysh};
@@ -59,6 +62,10 @@ impl<BackendData: Backend + 'static> WlrLayerShellHandler for Buddaraysh<Backend
         }) {
             map.unmap_layer(&layer);
         }
+    }
+
+    fn new_popup(&mut self, _parent: LayerSurface, popup: PopupSurface) {
+        self.unconstrain_popup(&popup);
     }
 }
 delegate_layer_shell!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
