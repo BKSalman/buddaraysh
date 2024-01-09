@@ -25,8 +25,8 @@ use smithay::{
         drm::{
             compositor::{DrmCompositor, RenderFrameResult},
             gbm::GbmFramebuffer,
-            CreateDrmNodeError, DrmDevice, DrmDeviceFd, DrmError, DrmEvent, DrmEventMetadata,
-            DrmNode, DrmSurface, GbmBufferedSurface, NodeType,
+            CreateDrmNodeError, DrmAccessError, DrmDevice, DrmDeviceFd, DrmError, DrmEvent,
+            DrmEventMetadata, DrmNode, DrmSurface, GbmBufferedSurface, NodeType,
         },
         egl::{self, context::ContextPriority, EGLDevice, EGLDisplay},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
@@ -1321,10 +1321,10 @@ impl Buddaraysh<UdevData> {
                     }
                     SwapBuffersError::TemporaryFailure(err) => matches!(
                         err.downcast_ref::<DrmError>(),
-                        Some(DrmError::Access {
+                        Some(DrmError::Access(DrmAccessError {
                             source,
                             ..
-                        }) if source.kind() == io::ErrorKind::PermissionDenied
+                        })) if source.kind() == io::ErrorKind::PermissionDenied
                     ),
                     SwapBuffersError::ContextLost(err) => panic!("Rendering loop lost: {}", err),
                 }
@@ -1522,7 +1522,7 @@ impl Buddaraysh<UdevData> {
                     SwapBuffersError::TemporaryFailure(err) => match err.downcast_ref::<DrmError>()
                     {
                         Some(DrmError::DeviceInactive) => true,
-                        Some(DrmError::Access { source, .. }) => {
+                        Some(DrmError::Access(DrmAccessError { source, .. })) => {
                             source.kind() == io::ErrorKind::PermissionDenied
                         }
                         _ => false,

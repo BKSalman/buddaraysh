@@ -55,3 +55,13 @@ then open your display manager and run Buddaraysh
 | BUD_LOG                    | specify the logging level     | trace/info/debug    | defaults to debug level       |
 | BUD_BACKEND                | specify buddaraysh's backend  | winit/udev          | udev                          |
 | BUD_DISABLE_DRM_COMPOSITOR | disable drm compositor        | yes/1/true/y        | defaults to enabling drm      |
+
+
+# Thanks to
+(basically stole from these projects)
+
+- [Smithay](https://www.github.com/smithay/smithay) (for the library and for [Anvil](https://github.com/Smithay/smithay/tree/master/anvil))
+- [Comsic-comp](https://github.com/pop-os/cosmic-comp)
+- [Pinnacle](https://github.com/pinnacle-comp/pinnacle)
+- [Niri](https://www.github.com/YaLTeR/niri/)
+- [MgmaWM](https://github.com/MagmaWM/MagmaWM/)

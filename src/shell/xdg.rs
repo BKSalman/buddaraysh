@@ -2,20 +2,26 @@ use std::cell::RefCell;
 
 use smithay::{
     delegate_xdg_activation, delegate_xdg_shell,
-    desktop::{space::SpaceElement, PopupKind, PopupManager, Space, Window},
+    desktop::{
+        find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
+        space::SpaceElement, LayerSurface, PopupKind, PopupManager, Space, Window,
+        WindowSurfaceType,
+    },
     input::{
         pointer::{Focus, GrabStartData as PointerGrabStartData},
         Seat,
     },
     output::Output,
     reexports::{
-        wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_protocols::xdg::shell::server::{
+            xdg_positioner::ConstraintAdjustment, xdg_toplevel,
+        },
         wayland_server::{
             protocol::{wl_output::WlOutput, wl_seat, wl_surface::WlSurface},
             Resource,
         },
     },
-    utils::{Rectangle, Serial},
+    utils::{Logical, Rectangle, Serial},
     wayland::{
         compositor::{self, with_states},
         seat::WaylandFocus,
@@ -53,6 +59,7 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
+        self.unconstrain_popup(&surface);
         let _ = self.popups.track_popup(PopupKind::from(surface));
     }
 
@@ -410,6 +417,77 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
 
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }
+
+    pub fn unconstrain_popup(&self, popup: &PopupSurface) {
+        // Popups with a NULL parent will get repositioned in their respective protocol handlers
+        // (i.e. layer-shell).
+        let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
+            return;
+        };
+
+        // Figure out if the root is a window or a layer surface.
+        if let Some((window, output)) = self
+            .window_for_surface(&root)
+            .zip(self.workspaces.current_workspace().outputs().next())
+        {
+            self.unconstrain_window_popup(popup, &window, output);
+        } else if let Some((layer_surface, output)) =
+            self.workspaces.current_workspace().outputs().find_map(|o| {
+                let map = layer_map_for_output(o);
+                let layer_surface = map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)?;
+                Some((layer_surface.clone(), o))
+            })
+        {
+            self.unconstrain_layer_shell_popup(popup, &layer_surface, output);
+        }
+    }
+
+    fn unconstrain_window_popup(
+        &self,
+        popup: &PopupSurface,
+        window: &WindowElement,
+        output: &Output,
+    ) {
+        let workspace = self.workspaces.current_workspace();
+        let output_geo = workspace.output_geometry(output).unwrap();
+        let window_location = workspace.window_location(window).unwrap();
+
+        let mut target =
+            Rectangle::from_loc_and_size((0, 0), (output_geo.size.w, output_geo.size.h));
+        target.loc -= window_location;
+        target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
+
+        popup.with_pending_state(|state| {
+            state.geometry = unconstrain_with_padding(state.positioner, target);
+        });
+    }
+
+    pub fn unconstrain_layer_shell_popup(
+        &self,
+        popup: &PopupSurface,
+        layer_surface: &LayerSurface,
+        output: &Output,
+    ) {
+        let output_geo = self
+            .workspaces
+            .current_workspace()
+            .output_geometry(output)
+            .unwrap();
+        let map = layer_map_for_output(output);
+        let Some(layer_geo) = map.layer_geometry(layer_surface) else {
+            return;
+        };
+
+        // The target geometry for the positioner should be relative to its parent's geometry, so
+        // we will compute that here.
+        let mut target = Rectangle::from_loc_and_size((0, 0), output_geo.size);
+        target.loc -= layer_geo.loc;
+        target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
+
+        popup.with_pending_state(|state| {
+            state.geometry = unconstrain_with_padding(state.positioner, target);
+        });
+    }
 }
 
 impl<BackendData: Backend + 'static> XdgActivationHandler for Buddaraysh<BackendData> {
@@ -428,3 +506,44 @@ impl<BackendData: Backend + 'static> XdgActivationHandler for Buddaraysh<Backend
 }
 
 delegate_xdg_activation!(@<BackendData: Backend + 'static> Buddaraysh<BackendData>);
+
+fn unconstrain_with_padding(
+    positioner: PositionerState,
+    target: Rectangle<i32, Logical>,
+) -> Rectangle<i32, Logical> {
+    // Try unconstraining with a small padding first which looks nicer, then if it doesn't fit try
+    // unconstraining without padding.
+    const PADDING: i32 = 8;
+
+    let mut padded = target;
+    if PADDING * 2 < padded.size.w {
+        padded.loc.x += PADDING;
+        padded.size.w -= PADDING * 2;
+    }
+    if PADDING * 2 < padded.size.h {
+        padded.loc.y += PADDING;
+        padded.size.h -= PADDING * 2;
+    }
+
+    // No padding, so just unconstrain with the original target.
+    if padded == target {
+        return positioner.get_unconstrained_geometry(target);
+    }
+
+    // Do not try to resize to fit the padded target rectangle.
+    let mut no_resize = positioner;
+    no_resize
+        .constraint_adjustment
+        .remove(ConstraintAdjustment::ResizeX);
+    no_resize
+        .constraint_adjustment
+        .remove(ConstraintAdjustment::ResizeY);
+
+    let geo = no_resize.get_unconstrained_geometry(padded);
+    if padded.contains_rect(geo) {
+        return geo;
+    }
+
+    // Could not unconstrain into the padded target, so resort to the regular one.
+    positioner.get_unconstrained_geometry(target)
+}
