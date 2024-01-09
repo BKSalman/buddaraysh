@@ -410,7 +410,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             .find(|workspace| workspace.windows().any(|m| m == window))
     }
 
-    pub fn workspace_for(&mut self, window: &WindowMapped) -> Option<&Workspace> {
+    pub fn workspace_for(&self, window: &WindowMapped) -> Option<&Workspace> {
         self.workspaces
             .workspaces()
             .find(|workspace| workspace.windows().any(|m| m == window))

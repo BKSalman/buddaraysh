@@ -4,8 +4,8 @@ use smithay::{
     delegate_xdg_activation, delegate_xdg_shell,
     desktop::{
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
-        space::SpaceElement, LayerSurface, PopupKind, PopupManager, Space, Window,
-        WindowSurfaceType,
+        space::SpaceElement, LayerSurface, PopupKeyboardGrab, PopupKind, PopupManager,
+        PopupPointerGrab, PopupUngrabStrategy, Space, Window, WindowSurfaceType,
     },
     input::{
         pointer::{Focus, GrabStartData as PointerGrabStartData},
@@ -38,8 +38,9 @@ use crate::{
     focus::FocusTarget,
     grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
     shell::{layout::ManagedLayer, FullscreenSurface},
-    utils::geometry::{PointExt, PointLocalExt, SizeExt},
+    utils::geometry::{PointExt, PointLocalExt, RectGlobalExt, SizeExt},
     window::{WindowElement, WindowMapped},
+    workspace::Workspace,
     Backend, Buddaraysh, OutputExt,
 };
 
@@ -495,12 +496,16 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         };
 
         // Figure out if the root is a window or a layer surface.
-        if let Some((window, output)) = self
+        if let Some((window, workspace)) = self
             .window_for_surface(&root)
             .zip(self.workspaces.current_workspace().outputs().next())
         {
             self.unconstrain_window_popup(popup, &window, output);
         } else if let Some((layer_surface, output)) = self.workspaces.outputs().find_map(|o| {
+            .and_then(|window| self.workspace_for(&window).map(|w| (window, w)))
+        {
+            self.unconstrain_window_popup(popup, &window, workspace);
+        } else if let Some((layer_surface, output)) = self.outputs().find_map(|o| {
             let map = layer_map_for_output(o);
             let layer_surface = map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)?;
             Some((layer_surface.clone(), o))
@@ -512,15 +517,18 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
     fn unconstrain_window_popup(
         &self,
         popup: &PopupSurface,
-        window: &WindowElement,
-        output: &Output,
+        window: &WindowMapped,
+        workspace: &Workspace,
     ) {
-        let workspace = self.workspaces.current_workspace();
-        let output_geo = workspace.output_geometry(output).unwrap();
+        let output_geo = workspace.output.geometry();
         let window_location = workspace.window_location(window).unwrap();
 
         let mut target = Rectangle::from_loc_and_size((0, 0), output_geo.size);
         target.loc -= window_location;
+        let mut target =
+            Rectangle::from_loc_and_size((0, 0), (output_geo.size.w, output_geo.size.h))
+                .as_logical();
+        target.loc -= window_location.as_logical();
         target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
 
         popup.with_pending_state(|state| {
@@ -534,11 +542,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         layer_surface: &LayerSurface,
         output: &Output,
     ) {
-        let output_geo = self
-            .workspaces
-            .current_workspace()
-            .output_geometry(output)
-            .unwrap();
+        let output_geo = output.geometry();
         let map = layer_map_for_output(output);
         let Some(layer_geo) = map.layer_geometry(layer_surface) else {
             return;
@@ -546,7 +550,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
 
         // The target geometry for the positioner should be relative to its parent's geometry, so
         // we will compute that here.
-        let mut target = Rectangle::from_loc_and_size((0, 0), output_geo.size);
+        let mut target = Rectangle::from_loc_and_size((0, 0), output_geo.size).as_logical();
         target.loc -= layer_geo.loc;
         target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
 
