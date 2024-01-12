@@ -48,7 +48,7 @@ use crate::{
     utils::geometry::{
         Global, PointExt, PointGlobalExt, PointLocalExt, RectExt, RectLocalExt, SizeExt,
     },
-    window::{WindowElement, WindowMapped},
+    window::WindowElement,
     winit::WinitData,
     Action, Backend, OutputExt, BTN_LEFT, BTN_RIGHT,
 };
@@ -188,7 +188,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                     .and_then(|focused| focused.wl_surface())
                 {
                     if let Some(window) = self.window_for_surface(&focused_surface) {
-                        match &window.element {
+                        match &window {
                             WindowElement::Wayland(w) => {
                                 XdgShellHandler::unfullscreen_request(self, w.toplevel().clone())
                             }
@@ -221,7 +221,6 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                     // FIXME: should use local pointer location
                     let target = Buddaraysh::<BackendData>::surface_under(
                         pointer_location,
-                        &output,
                         workspace,
                         &self.override_redirect_windows,
                     );
@@ -467,7 +466,6 @@ impl Buddaraysh<WinitData> {
 
                 let under = Buddaraysh::<WinitData>::surface_under(
                     pos,
-                    output,
                     workspace,
                     &self.override_redirect_windows,
                 )
@@ -660,7 +658,6 @@ impl Buddaraysh<UdevData> {
                 let workspace = self.current_workspace(&output);
                 let under = Buddaraysh::<UdevData>::surface_under(
                     pointer_location,
-                    &output,
                     workspace,
                     &self.override_redirect_windows,
                 )
@@ -721,7 +718,6 @@ impl Buddaraysh<UdevData> {
 
                 let new_under = Buddaraysh::<UdevData>::surface_under(
                     pointer_location,
-                    &output,
                     workspace,
                     &self.override_redirect_windows,
                 )
@@ -801,7 +797,6 @@ impl Buddaraysh<UdevData> {
                 let workspace = self.current_workspace(&output);
                 let under = Buddaraysh::<UdevData>::surface_under(
                     pointer_location,
-                    &output,
                     workspace,
                     &self.override_redirect_windows,
                 )
@@ -846,122 +841,147 @@ impl Buddaraysh<UdevData> {
                             && !pointer.is_grabbed()
                         {
                             let workspace = self.current_workspace(&output);
-                            if let Some((FocusTarget::Window(window), _loc)) =
-                                Buddaraysh::<UdevData>::surface_under(
-                                    pointer_location,
-                                    &output,
-                                    workspace,
-                                    &self.override_redirect_windows,
-                                )
-                            {
-                                match &window.element {
-                                    WindowElement::Wayland(w) => {
-                                        let seat = self.seat.clone();
-                                        let toplevel = w.toplevel().clone();
-                                        let focus = workspace
-                                            .window_location(&window)
-                                            .map(|l| (FocusTarget::Window(window), l.as_logical()));
-                                        let start_data = smithay::input::pointer::GrabStartData {
-                                            focus,
-                                            button,
-                                            location: pointer.current_location(),
-                                        };
+                            if workspace.fullscreen.is_none() {
+                                if let Some((FocusTarget::Window(window), loc)) =
+                                    Buddaraysh::<UdevData>::surface_under(
+                                        pointer_location,
+                                        workspace,
+                                        &self.override_redirect_windows,
+                                    )
+                                {
+                                    match &window {
+                                        WindowElement::Wayland(w) => {
+                                            let seat = self.seat.clone();
+                                            let toplevel = w.toplevel().clone();
+                                            let window_location = loc.to_local(&workspace.output);
+                                            let start_data =
+                                                smithay::input::pointer::GrabStartData {
+                                                    focus: Some((
+                                                        FocusTarget::Window(window),
+                                                        window_location.as_logical(),
+                                                    )),
+                                                    button,
+                                                    location: pointer.current_location(),
+                                                };
 
-                                        self.move_request_xdg(&toplevel, &seat, serial, start_data);
-                                    }
-                                    #[cfg(feature = "xwayland")]
-                                    WindowElement::X11(w) => {
-                                        let w = w.clone();
-                                        let focus = workspace
-                                            .window_location(&window)
-                                            .map(|l| (FocusTarget::Window(window), l.as_logical()));
+                                            self.move_request_xdg(
+                                                &toplevel, &seat, serial, start_data,
+                                            );
+                                        }
+                                        #[cfg(feature = "xwayland")]
+                                        WindowElement::X11(w) => {
+                                            let w = w.clone();
+                                            let window_location = loc.to_local(&workspace.output);
 
-                                        let start_data = smithay::input::pointer::GrabStartData {
-                                            focus,
-                                            button,
-                                            location: pointer.current_location(),
-                                        };
+                                            let start_data =
+                                                smithay::input::pointer::GrabStartData {
+                                                    focus: Some((
+                                                        FocusTarget::Window(window),
+                                                        window_location.as_logical(),
+                                                    )),
+                                                    button,
+                                                    location: pointer.current_location(),
+                                                };
 
-                                        self.move_request_x11(&w, start_data);
+                                            self.move_request_x11(&w, start_data);
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        if modifiers.logo
-                            && button == BTN_RIGHT
-                            && !keyboard.is_grabbed()
-                            && !pointer.is_grabbed()
-                        {
-                            let workspace = self.current_workspace(&output);
-                            if let Some((FocusTarget::Window(window), _loc)) =
-                                Buddaraysh::<UdevData>::surface_under(
-                                    pointer_location,
-                                    &output,
-                                    workspace,
-                                    &self.override_redirect_windows,
-                                )
+                            if modifiers.logo
+                                && button == BTN_RIGHT
+                                && !keyboard.is_grabbed()
+                                && !pointer.is_grabbed()
                             {
-                                let window_location = workspace.window_location(&window).unwrap();
-                                let geometry = window.geometry();
-                                info!(?geometry, ?pointer_location, ?window_location);
-                                match window.element {
-                                    WindowElement::Wayland(ref w) => {
-                                        let seat = self.seat.clone();
-                                        let toplevel = w.toplevel().clone();
-                                        let diff = pointer_location
-                                            - window_location.to_global(&workspace.output).to_f64();
-                                        let half_width = (geometry.size.w / 2) as f64;
-                                        let half_height = (geometry.size.h / 2) as f64;
-                                        let edge = if diff.x > half_width && diff.y > half_height {
-                                            ResizeEdge::BottomRight
-                                        } else if diff.x < half_width && diff.y < half_height {
-                                            ResizeEdge::TopLeft
-                                        } else if diff.x > half_width && diff.y < half_height {
-                                            ResizeEdge::TopRight
-                                        } else if diff.x < half_width && diff.y > half_height {
-                                            ResizeEdge::BottomLeft
-                                        } else {
-                                            ResizeEdge::None
-                                        };
-
-                                        let start_data = GrabStartData {
-                                            focus: None,
-                                            button,
-                                            location: pointer.current_location(),
-                                        };
-
-                                        self.resize_request_xdg(
-                                            toplevel, seat, serial, edge, start_data,
-                                        );
-                                    }
-                                    #[cfg(feature = "xwayland")]
-                                    WindowElement::X11(ref w) => {
-                                        let pointer_location = pointer.current_location();
-                                        let window_location =
-                                            workspace.window_location(&window).unwrap();
+                                let workspace = self.current_workspace(&output);
+                                if workspace.fullscreen.is_none() {
+                                    if let Some((FocusTarget::Window(window), loc)) =
+                                        Buddaraysh::<UdevData>::surface_under(
+                                            pointer_location,
+                                            workspace,
+                                            &self.override_redirect_windows,
+                                        )
+                                    {
+                                        let window_location = loc.to_local(&workspace.output);
                                         let geometry = window.geometry();
-                                        let diff = pointer_location
-                                            - window_location.as_logical().to_f64();
-                                        let half_width = (geometry.size.w / 2) as f64;
-                                        let half_height = (geometry.size.h / 2) as f64;
-                                        let edge = if diff.x < half_width && diff.y < half_height {
-                                            X11ResizeEdge::TopLeft
-                                        } else if diff.x > half_width && diff.y < half_height {
-                                            X11ResizeEdge::TopRight
-                                        } else if diff.x < half_width && diff.y > half_height {
-                                            X11ResizeEdge::BottomLeft
-                                        } else {
-                                            X11ResizeEdge::BottomRight
-                                        };
+                                        info!(?geometry, ?pointer_location, ?window_location);
+                                        match &window {
+                                            WindowElement::Wayland(w) => {
+                                                let seat = self.seat.clone();
+                                                let toplevel = w.toplevel().clone();
+                                                let diff = pointer_location
+                                                    - window_location
+                                                        .to_global(&workspace.output)
+                                                        .to_f64();
+                                                let half_width = (geometry.size.w / 2) as f64;
+                                                let half_height = (geometry.size.h / 2) as f64;
+                                                let edge = if diff.x > half_width
+                                                    && diff.y > half_height
+                                                {
+                                                    ResizeEdge::BottomRight
+                                                } else if diff.x < half_width
+                                                    && diff.y < half_height
+                                                {
+                                                    ResizeEdge::TopLeft
+                                                } else if diff.x > half_width
+                                                    && diff.y < half_height
+                                                {
+                                                    ResizeEdge::TopRight
+                                                } else if diff.x < half_width
+                                                    && diff.y > half_height
+                                                {
+                                                    ResizeEdge::BottomLeft
+                                                } else {
+                                                    ResizeEdge::None
+                                                };
 
-                                        let start_data = GrabStartData {
-                                            focus: None,
-                                            button,
-                                            location: pointer.current_location(),
-                                        };
+                                                let start_data = GrabStartData {
+                                                    focus: None,
+                                                    button,
+                                                    location: pointer.current_location(),
+                                                };
 
-                                        self.resize_request_x11(edge, w, start_data);
+                                                self.resize_request_xdg(
+                                                    toplevel, seat, serial, edge, start_data,
+                                                );
+                                            }
+                                            #[cfg(feature = "xwayland")]
+                                            WindowElement::X11(w) => {
+                                                let window_location =
+                                                    workspace.window_location(&window).unwrap();
+                                                let geometry = window.geometry();
+                                                let diff = pointer_location
+                                                    - window_location
+                                                        .to_global(&workspace.output)
+                                                        .to_f64();
+                                                let half_width = (geometry.size.w / 2) as f64;
+                                                let half_height = (geometry.size.h / 2) as f64;
+                                                let edge = if diff.x < half_width
+                                                    && diff.y < half_height
+                                                {
+                                                    X11ResizeEdge::TopLeft
+                                                } else if diff.x > half_width
+                                                    && diff.y < half_height
+                                                {
+                                                    X11ResizeEdge::TopRight
+                                                } else if diff.x < half_width
+                                                    && diff.y > half_height
+                                                {
+                                                    X11ResizeEdge::BottomLeft
+                                                } else {
+                                                    X11ResizeEdge::BottomRight
+                                                };
+
+                                                let start_data = GrabStartData {
+                                                    focus: None,
+                                                    button,
+                                                    location: pointer.current_location(),
+                                                };
+
+                                                self.resize_request_x11(edge, &w, start_data);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1112,7 +1132,6 @@ impl Buddaraysh<UdevData> {
                 let pointer = self.pointer.clone();
                 let under = Buddaraysh::<UdevData>::surface_under(
                     pointer_location,
-                    output,
                     workspace,
                     &self.override_redirect_windows,
                 )
@@ -1180,7 +1199,6 @@ impl Buddaraysh<UdevData> {
                     let pointer = self.pointer.clone();
                     let under = Buddaraysh::<UdevData>::surface_under(
                         pointer_location,
-                        output,
                         workspace,
                         &self.override_redirect_windows,
                     )
@@ -1263,7 +1281,6 @@ impl Buddaraysh<UdevData> {
                             + output_geometry.loc.to_f64();
                         if let Some((surface, surface_pos)) = Buddaraysh::<UdevData>::surface_under(
                             position,
-                            output,
                             workspace,
                             &self.override_redirect_windows,
                         ) {
@@ -1374,7 +1391,7 @@ impl Buddaraysh<UdevData> {
                         WindowSurfaceType::ALL,
                     ) {
                         #[cfg(feature = "xwayland")]
-                        if let WindowElement::X11(surf) = &fullscreen.window.element {
+                        if let WindowElement::X11(surf) = &fullscreen.window {
                             self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
                         }
                         keyboard.set_focus(self, Some(fullscreen.window.clone().into()), serial);
@@ -1409,7 +1426,7 @@ impl Buddaraysh<UdevData> {
                     workspace.raise_window(&window, true);
                     keyboard.set_focus(self, Some(window.clone().into()), serial);
                     #[cfg(feature = "xwayland")]
-                    if let WindowElement::X11(surf) = &window.element {
+                    if let WindowElement::X11(surf) = &window {
                         self.xwm.as_mut().unwrap().raise_window(surf).unwrap();
                     }
                     return;

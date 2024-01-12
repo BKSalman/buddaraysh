@@ -7,16 +7,16 @@ use smithay::{
 
 use crate::{
     utils::geometry::{Local, PointLocalExt},
-    window::WindowMapped,
+    window::WindowElement,
 };
 
 #[derive(Default, Debug)]
 pub struct FloatingLayout {
-    space: Space<WindowMapped>,
+    space: Space<WindowElement>,
 }
 
 impl FloatingLayout {
-    pub fn elements(&self) -> impl DoubleEndedIterator<Item = &WindowMapped> {
+    pub fn elements(&self) -> impl DoubleEndedIterator<Item = &WindowElement> {
         self.space.elements()
     }
 
@@ -24,7 +24,7 @@ impl FloatingLayout {
         self.space.outputs()
     }
 
-    pub fn element_for_surface(&self, surface: &WlSurface) -> Option<WindowMapped> {
+    pub fn element_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
         self.space
             .elements()
             .find(|window| window.wl_surface().map(|s| s == *surface).unwrap_or(false))
@@ -42,11 +42,11 @@ impl FloatingLayout {
     pub fn element_under(
         &self,
         pos: impl Into<Point<f64, Logical>>,
-    ) -> Option<(&WindowMapped, Point<i32, Logical>)> {
+    ) -> Option<(&WindowElement, Point<i32, Logical>)> {
         self.space.element_under(pos)
     }
 
-    pub fn element_bbox(&self, window: &WindowMapped) -> Option<Rectangle<i32, Logical>> {
+    pub fn element_bbox(&self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
         self.space.element_bbox(window)
     }
 
@@ -54,11 +54,11 @@ impl FloatingLayout {
         self.space.output_geometry(output)
     }
 
-    pub fn outputs_for_element(&self, window: &WindowMapped) -> Vec<Output> {
+    pub fn outputs_for_element(&self, window: &WindowElement) -> Vec<Output> {
         self.space.outputs_for_element(window)
     }
 
-    pub fn unmap_element(&mut self, window: &WindowMapped) -> bool {
+    pub fn unmap_element(&mut self, window: &WindowElement) -> bool {
         let was_unmaped = self.space.elements().any(|e| e == window);
         self.space.unmap_elem(window);
 
@@ -72,17 +72,17 @@ impl FloatingLayout {
         self.space.output_under(point)
     }
 
-    pub fn element_location(&self, window: &WindowMapped) -> Option<Point<i32, Logical>> {
+    pub fn element_location(&self, window: &WindowElement) -> Option<Point<i32, Logical>> {
         self.space.element_location(window)
     }
 
-    pub fn raise_element(&mut self, window: &WindowMapped, activate: bool) {
+    pub fn raise_element(&mut self, window: &WindowElement, activate: bool) {
         self.space.raise_element(window, activate);
     }
 
     pub fn map_element(
         &mut self,
-        window: WindowMapped,
+        window: WindowElement,
         location: Point<i32, Local>,
         activate: bool,
     ) {
@@ -94,7 +94,7 @@ impl FloatingLayout {
         self.space.refresh();
     }
 
-    pub fn space(&self) -> &Space<WindowMapped> {
+    pub fn space(&self) -> &Space<WindowElement> {
         &self.space
     }
 }

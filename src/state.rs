@@ -65,7 +65,7 @@ use crate::{
     cursor::Cursor,
     focus::FocusTarget,
     utils::geometry::{Global, PointExt, PointGlobalExt, PointLocalExt},
-    window::{WindowElement, WindowMapped},
+    window::WindowElement,
     workspace::{Workspace, WorkspaceSet, Workspaces},
     Backend, CalloopData, OutputExt,
 };
@@ -327,16 +327,19 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
 
     pub fn surface_under(
         global_pos: Point<f64, Global>,
-        output: &Output,
         workspace: &Workspace,
         override_redirect_windows: &[X11Surface],
     ) -> Option<(FocusTarget, Point<i32, Global>)> {
+        let output = &workspace.output;
         let output_geo = output.geometry();
         let relative_pos = global_pos.to_local(output);
         let layers = layer_map_for_output(output);
 
-        if let Some(window) = &workspace.fullscreen {
-            return Some((FocusTarget::Window(window.window.clone()), output_geo.loc));
+        if let Some(fullscreen) = &workspace.fullscreen {
+            return Some((
+                FocusTarget::Window(fullscreen.window.clone()),
+                output_geo.loc,
+            ));
         } else if let Some(layer) = layers
             .layer_under(WlrLayer::Overlay, relative_pos.as_logical())
             .or_else(|| layers.layer_under(WlrLayer::Top, relative_pos.as_logical()))
@@ -355,8 +358,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             .iter()
             .find(|or| or.is_in_input_region(&global_pos.as_logical()))
         {
-            let window =
-                FocusTarget::Window(WindowMapped::new(WindowElement::X11(or.clone()), None));
+            let window = FocusTarget::Window(WindowElement::X11(or.clone()));
             return Some((window, output_geo.loc + or.geometry().loc.as_global()));
         } else if let Some((window, location)) = workspace.window_under(global_pos) {
             return Some((window.clone().into(), location));
@@ -404,13 +406,13 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             .unwrap_or_else(Rectangle::default)
     }
 
-    pub fn workspace_for_mut(&mut self, window: &WindowMapped) -> Option<&mut Workspace> {
+    pub fn workspace_for_mut(&mut self, window: &WindowElement) -> Option<&mut Workspace> {
         self.workspaces
             .workspaces_mut()
             .find(|workspace| workspace.windows().any(|m| m == window))
     }
 
-    pub fn workspace_for(&self, window: &WindowMapped) -> Option<&Workspace> {
+    pub fn workspace_for(&self, window: &WindowElement) -> Option<&Workspace> {
         self.workspaces
             .workspaces()
             .find(|workspace| workspace.windows().any(|m| m == window))
@@ -434,7 +436,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         })
     }
 
-    pub fn workspaceset_for(&self, window: &WindowMapped) -> Option<&WorkspaceSet> {
+    pub fn workspaceset_for(&self, window: &WindowElement) -> Option<&WorkspaceSet> {
         self.workspaces.workspacesets().find(|workspaceset| {
             workspaceset
                 .workspaces()
@@ -443,7 +445,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         })
     }
 
-    pub fn workspaceset_for_mut(&mut self, window: &WindowMapped) -> Option<&mut WorkspaceSet> {
+    pub fn workspaceset_for_mut(&mut self, window: &WindowElement) -> Option<&mut WorkspaceSet> {
         self.workspaces.workspacesets_mut().find(|workspaceset| {
             workspaceset
                 .workspaces()
@@ -452,7 +454,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         })
     }
 
-    pub fn windows(&self) -> impl Iterator<Item = &WindowMapped> {
+    pub fn windows(&self) -> impl Iterator<Item = &WindowElement> {
         self.workspaces.workspaces().flat_map(|w| w.windows())
     }
 }

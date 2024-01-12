@@ -5,7 +5,7 @@ use smithay::{
     desktop::{
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
         space::SpaceElement, LayerSurface, PopupKeyboardGrab, PopupKind, PopupManager,
-        PopupPointerGrab, PopupUngrabStrategy, Space, Window, WindowSurfaceType,
+        PopupPointerGrab, PopupUngrabStrategy, Window, WindowSurfaceType,
     },
     input::{
         pointer::{Focus, GrabStartData as PointerGrabStartData},
@@ -38,8 +38,9 @@ use crate::{
     focus::FocusTarget,
     grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
     shell::{layout::ManagedLayer, FullscreenSurface},
+    ssd::HEADER_BAR_HEIGHT,
     utils::geometry::{PointExt, PointLocalExt, RectGlobalExt, SizeExt},
-    window::{WindowElement, WindowMapped},
+    window::WindowElement,
     workspace::Workspace,
     Backend, Buddaraysh, OutputExt,
 };
@@ -50,7 +51,7 @@ impl<BackendData: Backend + 'static> XdgShellHandler for Buddaraysh<BackendData>
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        let window = WindowMapped::new(WindowElement::Wayland(Window::new(surface)), None);
+        let window = WindowElement::Wayland(Window::new(surface));
         if let Some(output) = self.output_under(self.pointer.current_location().as_global()) {
             let workspace = self.current_workspace_mut(&output);
             workspace.map_window(window);
@@ -298,12 +299,12 @@ fn check_grab<BackendData: Backend + 'static>(
 /// Should be called on `WlSurface::commit`
 pub fn handle_commit(
     popups: &mut PopupManager,
-    window: Option<&WindowMapped>,
+    window: Option<&WindowElement>,
     surface: &WlSurface,
 ) {
     // Handle toplevel commits.
     if let Some(w) = &window {
-        if let WindowElement::Wayland(window) = &w.element {
+        if let WindowElement::Wayland(window) = w {
             let initial_configure_sent = with_states(surface, |states| {
                 states
                     .data_map
@@ -446,19 +447,18 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
             return;
         };
 
-        let initial_window_location = workspace.window_location(&window).unwrap();
-        let initial_window_size = window.geometry().size;
-
         surface.with_pending_state(|state| {
             state.states.set(xdg_toplevel::State::Resizing);
         });
 
         surface.send_pending_configure();
 
-        let initial_rect =
-            Rectangle::from_loc_and_size(initial_window_location.as_logical(), initial_window_size);
+        let mut initial_rect = Rectangle::from_loc_and_size(
+            workspace.window_location(&window).unwrap().as_logical(),
+            window.geometry().size,
+        );
 
-        if window.decoration_state().is_ssd {
+        if window.state().is_ssd {
             initial_rect.size.h -= HEADER_BAR_HEIGHT;
         }
 
@@ -496,15 +496,10 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         };
 
         // Figure out if the root is a window or a layer surface.
-        if let Some((window, workspace)) = self
-            .window_for_surface(&root)
-            .zip(self.workspaces.current_workspace().outputs().next())
-        {
-            self.unconstrain_window_popup(popup, &window, output);
-        } else if let Some((layer_surface, output)) = self.workspaces.outputs().find_map(|o| {
-            .and_then(|window| self.workspace_for(&window).map(|w| (window, w)))
-        {
-            self.unconstrain_window_popup(popup, &window, workspace);
+        if let Some(window) = self.window_for_surface(&root) {
+            if let Some(workspace) = self.workspace_for(&window) {
+                self.unconstrain_window_popup(popup, &window, workspace);
+            }
         } else if let Some((layer_surface, output)) = self.outputs().find_map(|o| {
             let map = layer_map_for_output(o);
             let layer_surface = map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)?;
@@ -517,13 +512,13 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
     fn unconstrain_window_popup(
         &self,
         popup: &PopupSurface,
-        window: &WindowMapped,
+        window: &WindowElement,
         workspace: &Workspace,
     ) {
         let output_geo = workspace.output.geometry();
         let window_location = workspace.window_location(window).unwrap();
 
-        let mut target = Rectangle::from_loc_and_size((0, 0), output_geo.size);
+        let mut target = Rectangle::from_loc_and_size((0, 0), output_geo.size.as_local());
         target.loc -= window_location;
         let mut target =
             Rectangle::from_loc_and_size((0, 0), (output_geo.size.w, output_geo.size.h))

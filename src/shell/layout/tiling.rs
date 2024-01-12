@@ -6,20 +6,20 @@ use smithay::{
 };
 
 use crate::{
-    window::WindowMapped,
     utils::geometry::{Global, PointGlobalExt, RectExt, RectLocalExt},
+    window::WindowElement,
     workspace::Workspace,
     OutputExt,
 };
 
 #[derive(Default, Debug)]
 pub struct TilingLayout {
-    space: Space<WindowMapped>,
+    space: Space<WindowElement>,
     layout: Layout,
 }
 
 impl TilingLayout {
-    pub fn elements(&self) -> impl DoubleEndedIterator<Item = &WindowMapped> {
+    pub fn elements(&self) -> impl DoubleEndedIterator<Item = &WindowElement> {
         self.space.elements()
     }
 
@@ -27,7 +27,7 @@ impl TilingLayout {
         self.space.outputs()
     }
 
-    pub fn element_for_surface(&self, surface: &WlSurface) -> Option<WindowMapped> {
+    pub fn element_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
         self.space
             .elements()
             .find(|element| element.wl_surface().map(|s| s == *surface).unwrap_or(false))
@@ -45,11 +45,11 @@ impl TilingLayout {
     pub fn element_under(
         &self,
         pos: impl Into<Point<f64, Logical>>,
-    ) -> Option<(&WindowMapped, Point<i32, Logical>)> {
+    ) -> Option<(&WindowElement, Point<i32, Logical>)> {
         self.space.element_under(pos)
     }
 
-    pub fn element_bbox(&self, element: &WindowMapped) -> Option<Rectangle<i32, Logical>> {
+    pub fn element_bbox(&self, element: &WindowElement) -> Option<Rectangle<i32, Logical>> {
         self.space.element_bbox(element)
     }
 
@@ -57,11 +57,11 @@ impl TilingLayout {
         self.space.output_geometry(output)
     }
 
-    pub fn outputs_for_element(&self, element: &WindowMapped) -> Vec<Output> {
+    pub fn outputs_for_element(&self, element: &WindowElement) -> Vec<Output> {
         self.space.outputs_for_element(element)
     }
 
-    pub fn unmap_element(&mut self, window: &WindowMapped) -> bool {
+    pub fn unmap_element(&mut self, window: &WindowElement) -> bool {
         let was_unmaped = self.space.elements().any(|e| e == window);
         self.space.unmap_elem(window);
 
@@ -75,11 +75,11 @@ impl TilingLayout {
         self.space.output_under(point)
     }
 
-    pub fn element_location(&self, window: &WindowMapped) -> Option<Point<i32, Logical>> {
+    pub fn element_location(&self, window: &WindowElement) -> Option<Point<i32, Logical>> {
         self.space.element_location(window)
     }
 
-    pub fn map_element(&mut self, window: WindowMapped) {
+    pub fn map_element(&mut self, window: WindowElement) {
         self.space.map_element(window, Point::from((0, 0)), true);
     }
 
@@ -87,11 +87,11 @@ impl TilingLayout {
         self.space.refresh();
     }
 
-    pub fn space(&self) -> &Space<WindowMapped> {
+    pub fn space(&self) -> &Space<WindowElement> {
         &self.space
     }
 
-    pub fn space_mut(&mut self) -> &mut Space<WindowMapped> {
+    pub fn space_mut(&mut self) -> &mut Space<WindowElement> {
         &mut self.space
     }
 }
@@ -161,6 +161,7 @@ impl Workspace {
                     let size: smithay::utils::Size<i32, Global> =
                         (master_width as i32, geo.size.h).into();
                     let master_geo = Rectangle::from_loc_and_size(loc, size);
+                    tracing::debug!("master geo: {master_geo:#?}");
                     master.set_geometry(master_geo);
                     master.send_configure();
                     self.tiling_layer

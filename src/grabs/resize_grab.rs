@@ -1,9 +1,6 @@
 use crate::{
-    focus::FocusTarget,
-    utils::geometry::PointLocalExt,
-    window::{WindowElement, WindowMapped},
-    workspace::Workspace,
-    Backend, Buddaraysh, BTN_LEFT, BTN_RIGHT,
+    focus::FocusTarget, utils::geometry::PointLocalExt, window::WindowElement,
+    workspace::Workspace, Backend, Buddaraysh, BTN_LEFT, BTN_RIGHT,
 };
 use smithay::{
     desktop::space::SpaceElement,
@@ -64,7 +61,7 @@ impl From<xwm::ResizeEdge> for ResizeEdge {
 
 pub struct ResizeSurfaceGrab<BackendData: Backend + 'static> {
     pub start_data: PointerGrabStartData<Buddaraysh<BackendData>>,
-    pub window: WindowMapped,
+    pub window: WindowElement,
 
     pub edges: ResizeEdge,
 
@@ -153,7 +150,7 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
                 }
             }
         }
-        match &self.window.element {
+        match &self.window {
             WindowElement::Wayland(w) => {
                 let xdg = w.toplevel();
                 xdg.with_pending_state(|state| {
@@ -202,7 +199,6 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
                 return;
             }
 
-            match &self.window {
             let Some(workspace) = data.workspace_for(&self.window) else {
                 return;
             };
@@ -219,7 +215,7 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
                     }
                 }
             }
-            match &self.window.element {
+            match &self.window {
                 WindowElement::Wayland(w) => {
                     let xdg = w.toplevel();
                     xdg.with_pending_state(|state| {

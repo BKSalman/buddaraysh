@@ -65,6 +65,7 @@
     jq
     vim
     chatterino2
+    localsend
   ];
 
   programs.git.enable = true;

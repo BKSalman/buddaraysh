@@ -11,7 +11,6 @@ pub use tiling::Layout;
 pub use tiling::TilingLayout;
 
 use crate::window::WindowElement;
-use crate::window::WindowMapped;
 
 use super::FullscreenSurface;
 
@@ -97,9 +96,9 @@ lazy_static::lazy_static! {
     ]).unwrap();
 }
 
-pub fn should_be_floating(window: &WindowMapped) -> bool {
+pub fn should_be_floating(window: &WindowElement) -> bool {
     // Check "window type"
-    match &window.element {
+    match window {
         WindowElement::Wayland(window) => {
             if with_states(window.toplevel().wl_surface(), |states| {
                 let attrs = states

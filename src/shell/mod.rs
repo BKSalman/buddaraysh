@@ -1,6 +1,6 @@
 use smithay::utils::{Logical, Rectangle};
 
-use crate::window::WindowMapped;
+use crate::window::WindowElement;
 
 use self::layout::ManagedLayer;
 
@@ -53,7 +53,7 @@ pub mod xdg;
 
 #[derive(Debug, Clone)]
 pub struct FullscreenSurface {
-    pub window: WindowMapped,
+    pub window: WindowElement,
     pub previously: Option<(ManagedLayer, usize)>,
     pub original_geometry: Rectangle<i32, Logical>,
 }

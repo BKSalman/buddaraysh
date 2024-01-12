@@ -1,9 +1,6 @@
 use crate::{
-    grabs::resize_grab,
-    shell,
-    state::ClientState,
-    window::{WindowElement, WindowMapped},
-    Backend, Buddaraysh, CalloopData,
+    grabs::resize_grab, shell, state::ClientState, window::WindowElement, Backend, Buddaraysh,
+    CalloopData,
 };
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
@@ -95,7 +92,7 @@ impl<BackendData: Backend + 'static> CompositorHandler for Buddaraysh<BackendDat
             }
 
             if let Some(w) = self.window_for_surface(surface) {
-                if let WindowElement::Wayland(window) = w.element {
+                if let WindowElement::Wayland(window) = w {
                     window.on_commit();
                 }
             }
@@ -142,7 +139,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
     fn ensure_initial_configure<'a>(
         &mut self,
         surface: &WlSurface,
-        window: Option<&'a WindowMapped>,
+        window: Option<&'a WindowElement>,
         mut outputs: impl Iterator<Item = &'a Output>,
     ) {
         // TODO:
@@ -161,7 +158,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         if let Some(window) = window {
             // send the initial configure if relevant
             #[cfg_attr(not(feature = "xwayland"), allow(irrefutable_let_patterns))]
-            if let WindowElement::Wayland(ref toplevel) = window.element {
+            if let WindowElement::Wayland(toplevel) = &window {
                 let initial_configure_sent = with_states(surface, |states| {
                     states
                         .data_map

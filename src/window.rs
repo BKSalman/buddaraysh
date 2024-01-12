@@ -62,32 +62,19 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct WindowMapped {
-    pub element: WindowElement,
-
-    pub tiling_weight: Option<f32>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum WindowElement {
     Wayland(Window),
     #[cfg(feature = "xwayland")]
     X11(X11Surface),
 }
 
-impl WindowMapped {
-    pub fn new(element: WindowElement, tiling_weight: Option<f32>) -> Self {
-        Self {
-            element,
-            tiling_weight,
-        }
-    }
+impl WindowElement {
     pub fn surface_under(
         &self,
         location: Point<f64, Logical>,
         window_type: WindowSurfaceType,
     ) -> Option<(WlSurface, Point<i32, Logical>)> {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => w.surface_under(location, window_type),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => w
@@ -100,7 +87,7 @@ impl WindowMapped {
     where
         F: FnMut(&WlSurface, &WlSurfaceData),
     {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => w.with_surfaces(processor),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => {
@@ -121,7 +108,7 @@ impl WindowMapped {
         T: Into<Duration>,
         F: FnMut(&WlSurface, &WlSurfaceData) -> Option<Output> + Copy,
     {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => {
                 w.send_frame(output, time, throttle, primary_scan_out_output)
             }
@@ -149,7 +136,7 @@ impl WindowMapped {
         P: FnMut(&WlSurface, &WlSurfaceData) -> Option<Output> + Copy,
         F: Fn(&WlSurface, &WlSurfaceData) -> &'a DmabufFeedback + Copy,
     {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => {
                 w.send_dmabuf_feedback(output, primary_scan_out_output, select_dmabuf_feedback)
             }
@@ -176,7 +163,7 @@ impl WindowMapped {
         F1: FnMut(&WlSurface, &WlSurfaceData) -> Option<Output> + Copy,
         F2: FnMut(&WlSurface, &WlSurfaceData) -> wp_presentation_feedback::Kind + Copy,
     {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => w.take_presentation_feedback(
                 output_feedback,
                 primary_scan_out_output,
@@ -198,15 +185,15 @@ impl WindowMapped {
 
     #[cfg(feature = "xwayland")]
     pub fn is_x11(&self) -> bool {
-        matches!(self.element, WindowElement::X11(_))
+        matches!(self, WindowElement::X11(_))
     }
 
     pub fn is_wayland(&self) -> bool {
-        matches!(self.element, WindowElement::Wayland(_))
+        matches!(self, WindowElement::Wayland(_))
     }
 
     pub fn wl_surface(&self) -> Option<WlSurface> {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => w.wl_surface(),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => w.wl_surface(),
@@ -214,7 +201,7 @@ impl WindowMapped {
     }
 
     pub fn user_data(&self) -> &UserDataMap {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => w.user_data(),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => w.user_data(),
@@ -222,7 +209,7 @@ impl WindowMapped {
     }
 
     pub fn send_close(&self) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => w.toplevel().send_close(),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => {
@@ -234,7 +221,7 @@ impl WindowMapped {
     }
 
     pub fn is_decorated(&self, pending: bool) -> bool {
-        match &self.element {
+        match self {
             WindowElement::Wayland(window) => {
                 if pending {
                     window.toplevel().with_pending_state(|pending| {
@@ -257,7 +244,7 @@ impl WindowMapped {
     }
 
     pub fn max_size(&self) -> Option<Size<i32, Logical>> {
-        match &self.element {
+        match self {
             WindowElement::Wayland(window) => {
                 Some(with_states(window.toplevel().wl_surface(), |states| {
                     states.cached_state.current::<SurfaceCachedState>().max_size
@@ -276,7 +263,7 @@ impl WindowMapped {
     }
 
     pub fn min_size(&self) -> Option<Size<i32, Logical>> {
-        match &self.element {
+        match self {
             WindowElement::Wayland(window) => {
                 Some(with_states(window.toplevel().wl_surface(), |states| {
                     states.cached_state.current::<SurfaceCachedState>().min_size
@@ -295,7 +282,7 @@ impl WindowMapped {
     }
 
     pub fn app_id(&self) -> String {
-        match &self.element {
+        match self {
             WindowElement::Wayland(window) => {
                 with_states(window.toplevel().wl_surface(), |states| {
                     states
@@ -314,7 +301,7 @@ impl WindowMapped {
     }
 
     pub fn title(&self) -> String {
-        match &self.element {
+        match self {
             WindowElement::Wayland(window) => {
                 with_states(window.toplevel().wl_surface(), |states| {
                     states
@@ -333,7 +320,7 @@ impl WindowMapped {
     }
 
     pub fn set_fullscreen(&self, fullscreen: bool) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(window) => window.toplevel().with_pending_state(|state| {
                 if fullscreen {
                     state.states.set(xdg_toplevel::State::Fullscreen);
@@ -348,7 +335,7 @@ impl WindowMapped {
     }
 
     pub fn set_geometry(&self, geo: Rectangle<i32, Global>) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(window) => window
                 .toplevel()
                 .with_pending_state(|state| state.size = Some(geo.size.as_logical())),
@@ -359,14 +346,14 @@ impl WindowMapped {
     }
 
     pub fn send_configure(&self) -> Option<Serial> {
-        match &self.element {
+        match self {
             WindowElement::Wayland(window) => window.toplevel().send_pending_configure(),
             WindowElement::X11(_) => None,
         }
     }
 
     pub fn is_maximized(&self, pending: bool) -> bool {
-        match &self.element {
+        match self {
             WindowElement::Wayland(window) => {
                 if pending {
                     window.toplevel().with_pending_state(|pending| {
@@ -385,14 +372,14 @@ impl WindowMapped {
     }
 
     pub fn is_override_redirect(&self) -> bool {
-        match &self.element {
+        match self {
             WindowElement::Wayland(_) => false,
             WindowElement::X11(w) => w.is_override_redirect(),
         }
     }
 
     pub fn set_activated(&self, activated: bool) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(window) => {
                 window.set_activated(activated);
                 window.toplevel().send_pending_configure();
@@ -405,7 +392,7 @@ impl WindowMapped {
     }
 
     pub fn set_maximized(&self, maximized: bool) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(window) => window.toplevel().with_pending_state(|state| {
                 if maximized {
                     state.states.set(xdg_toplevel::State::Maximized);
@@ -420,9 +407,9 @@ impl WindowMapped {
     }
 }
 
-impl IsAlive for WindowMapped {
+impl IsAlive for WindowElement {
     fn alive(&self) -> bool {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => w.alive(),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => w.alive(),
@@ -430,7 +417,7 @@ impl IsAlive for WindowMapped {
     }
 }
 
-impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMapped {
+impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowElement {
     fn enter(
         &self,
         seat: &Seat<Buddaraysh<Backend>>,
@@ -445,7 +432,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
                 state.header_bar.pointer_leave();
                 let mut event = event.clone();
                 event.location.y -= HEADER_BAR_HEIGHT as f64;
-                match &self.element {
+                match self {
                     WindowElement::Wayland(w) => PointerTarget::enter(w, seat, data, &event),
                     #[cfg(feature = "xwayland")]
                     WindowElement::X11(w) => PointerTarget::enter(w, seat, data, &event),
@@ -454,7 +441,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
             }
         } else {
             state.ptr_entered_window = true;
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => PointerTarget::enter(w, seat, data, event),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => PointerTarget::enter(w, seat, data, event),
@@ -470,7 +457,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         let mut state = self.state();
         if state.is_ssd {
             if event.location.y < HEADER_BAR_HEIGHT as f64 {
-                match &self.element {
+                match self {
                     WindowElement::Wayland(w) => {
                         PointerTarget::leave(w, seat, data, event.serial, event.time)
                     }
@@ -486,14 +473,14 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
                 let mut event = event.clone();
                 event.location.y -= HEADER_BAR_HEIGHT as f64;
                 if state.ptr_entered_window {
-                    match &self.element {
+                    match self {
                         WindowElement::Wayland(w) => PointerTarget::motion(w, seat, data, &event),
                         #[cfg(feature = "xwayland")]
                         WindowElement::X11(w) => PointerTarget::motion(w, seat, data, &event),
                     };
                 } else {
                     state.ptr_entered_window = true;
-                    match &self.element {
+                    match self {
                         WindowElement::Wayland(w) => PointerTarget::enter(w, seat, data, &event),
                         #[cfg(feature = "xwayland")]
                         WindowElement::X11(w) => PointerTarget::enter(w, seat, data, &event),
@@ -501,7 +488,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
                 }
             }
         } else {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => PointerTarget::motion(w, seat, data, event),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => PointerTarget::motion(w, seat, data, event),
@@ -516,7 +503,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
     ) {
         let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => PointerTarget::relative_motion(w, seat, data, event),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => PointerTarget::relative_motion(w, seat, data, event),
@@ -532,7 +519,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         let mut state = self.state();
         if state.is_ssd {
             if state.ptr_entered_window {
-                match &self.element {
+                match self {
                     WindowElement::Wayland(w) => PointerTarget::button(w, seat, data, event),
                     #[cfg(feature = "xwayland")]
                     WindowElement::X11(w) => PointerTarget::button(w, seat, data, event),
@@ -541,7 +528,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
                 state.header_bar.clicked(seat, data, self, event.serial);
             }
         } else {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => PointerTarget::button(w, seat, data, event),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => PointerTarget::button(w, seat, data, event),
@@ -556,7 +543,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
     ) {
         let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => PointerTarget::axis(w, seat, data, frame),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => PointerTarget::axis(w, seat, data, frame),
@@ -566,7 +553,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
     fn frame(&self, seat: &Seat<Buddaraysh<Backend>>, data: &mut Buddaraysh<Backend>) {
         let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => PointerTarget::frame(w, seat, data),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => PointerTarget::frame(w, seat, data),
@@ -584,7 +571,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         if state.is_ssd {
             state.header_bar.pointer_leave();
             if state.ptr_entered_window {
-                match &self.element {
+                match self {
                     WindowElement::Wayland(w) => PointerTarget::leave(w, seat, data, serial, time),
                     #[cfg(feature = "xwayland")]
                     WindowElement::X11(w) => PointerTarget::leave(w, seat, data, serial, time),
@@ -592,7 +579,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
                 state.ptr_entered_window = false;
             }
         } else {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => PointerTarget::leave(w, seat, data, serial, time),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => PointerTarget::leave(w, seat, data, serial, time),
@@ -608,7 +595,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
     ) {
         let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => {
                     PointerTarget::gesture_swipe_begin(w, seat, data, event)
                 }
@@ -625,7 +612,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
     ) {
         let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => {
                     PointerTarget::gesture_swipe_update(w, seat, data, event)
                 }
@@ -642,7 +629,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
     ) {
         let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => PointerTarget::gesture_swipe_end(w, seat, data, event),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => PointerTarget::gesture_swipe_end(w, seat, data, event),
@@ -657,7 +644,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
     ) {
         let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => {
                     PointerTarget::gesture_pinch_begin(w, seat, data, event)
                 }
@@ -674,7 +661,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
     ) {
         let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => {
                     PointerTarget::gesture_pinch_update(w, seat, data, event)
                 }
@@ -691,7 +678,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
     ) {
         let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => PointerTarget::gesture_pinch_end(w, seat, data, event),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => PointerTarget::gesture_pinch_end(w, seat, data, event),
@@ -706,7 +693,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
     ) {
         let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => {
                     PointerTarget::gesture_hold_begin(w, seat, data, event)
                 }
@@ -723,7 +710,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
     ) {
         let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => PointerTarget::gesture_hold_end(w, seat, data, event),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => PointerTarget::gesture_hold_end(w, seat, data, event),
@@ -732,7 +719,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
     }
 }
 
-impl<Backend: crate::Backend> KeyboardTarget<Buddaraysh<Backend>> for WindowMapped {
+impl<Backend: crate::Backend> KeyboardTarget<Buddaraysh<Backend>> for WindowElement {
     fn enter(
         &self,
         seat: &Seat<Buddaraysh<Backend>>,
@@ -740,7 +727,7 @@ impl<Backend: crate::Backend> KeyboardTarget<Buddaraysh<Backend>> for WindowMapp
         keys: Vec<KeysymHandle<'_>>,
         serial: Serial,
     ) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => KeyboardTarget::enter(w, seat, data, keys, serial),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => KeyboardTarget::enter(w, seat, data, keys, serial),
@@ -752,7 +739,7 @@ impl<Backend: crate::Backend> KeyboardTarget<Buddaraysh<Backend>> for WindowMapp
         data: &mut Buddaraysh<Backend>,
         serial: Serial,
     ) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => KeyboardTarget::leave(w, seat, data, serial),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => KeyboardTarget::leave(w, seat, data, serial),
@@ -767,7 +754,7 @@ impl<Backend: crate::Backend> KeyboardTarget<Buddaraysh<Backend>> for WindowMapp
         serial: Serial,
         time: u32,
     ) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => {
                 KeyboardTarget::key(w, seat, data, key, state, serial, time)
             }
@@ -782,7 +769,7 @@ impl<Backend: crate::Backend> KeyboardTarget<Buddaraysh<Backend>> for WindowMapp
         modifiers: ModifiersState,
         serial: Serial,
     ) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => {
                 KeyboardTarget::modifiers(w, seat, data, modifiers, serial)
             }
@@ -792,9 +779,9 @@ impl<Backend: crate::Backend> KeyboardTarget<Buddaraysh<Backend>> for WindowMapp
     }
 }
 
-impl SpaceElement for WindowMapped {
+impl SpaceElement for WindowElement {
     fn geometry(&self) -> Rectangle<i32, Logical> {
-        let mut geo = match &self.element {
+        let mut geo = match self {
             WindowElement::Wayland(w) => SpaceElement::geometry(w),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => SpaceElement::geometry(w),
@@ -805,7 +792,7 @@ impl SpaceElement for WindowMapped {
         geo
     }
     fn bbox(&self) -> Rectangle<i32, Logical> {
-        let mut bbox = match &self.element {
+        let mut bbox = match self {
             WindowElement::Wayland(w) => SpaceElement::bbox(w),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => SpaceElement::bbox(w),
@@ -818,7 +805,7 @@ impl SpaceElement for WindowMapped {
     fn is_in_input_region(&self, point: &Point<f64, Logical>) -> bool {
         if self.state().is_ssd {
             point.y < HEADER_BAR_HEIGHT as f64
-                || match &self.element {
+                || match self {
                     WindowElement::Wayland(w) => SpaceElement::is_in_input_region(
                         w,
                         &(*point - Point::from((0.0, HEADER_BAR_HEIGHT as f64))),
@@ -830,7 +817,7 @@ impl SpaceElement for WindowMapped {
                     ),
                 }
         } else {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(w) => SpaceElement::is_in_input_region(w, point),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => SpaceElement::is_in_input_region(w, point),
@@ -838,7 +825,7 @@ impl SpaceElement for WindowMapped {
         }
     }
     fn z_index(&self) -> u8 {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => SpaceElement::z_index(w),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => SpaceElement::z_index(w),
@@ -846,21 +833,21 @@ impl SpaceElement for WindowMapped {
     }
 
     fn set_activate(&self, activated: bool) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => SpaceElement::set_activate(w, activated),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => SpaceElement::set_activate(w, activated),
         }
     }
     fn output_enter(&self, output: &Output, overlap: Rectangle<i32, Logical>) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => SpaceElement::output_enter(w, output, overlap),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => SpaceElement::output_enter(w, output, overlap),
         }
     }
     fn output_leave(&self, output: &Output) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => SpaceElement::output_leave(w, output),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => SpaceElement::output_leave(w, output),
@@ -868,7 +855,7 @@ impl SpaceElement for WindowMapped {
     }
     #[profiling::function]
     fn refresh(&self) {
-        match &self.element {
+        match self {
             WindowElement::Wayland(w) => SpaceElement::refresh(w),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => SpaceElement::refresh(w),
@@ -892,7 +879,7 @@ impl<R: Renderer> std::fmt::Debug for WindowRenderElement<R> {
     }
 }
 
-impl<R> AsRenderElements<R> for WindowMapped
+impl<R> AsRenderElements<R> for WindowElement
 where
     R: Renderer + ImportAll + ImportMem,
     <R as Renderer>::TextureId: Texture + 'static,
@@ -906,14 +893,14 @@ where
         scale: Scale<f64>,
         alpha: f32,
     ) -> Vec<C> {
-        let window_bbox = match &self.element {
+        let window_bbox = match self {
             WindowElement::Wayland(w) => SpaceElement::bbox(w),
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => SpaceElement::bbox(w),
         };
 
         if self.state().is_ssd && !window_bbox.is_empty() {
-            let window_geo = match &self.element {
+            let window_geo = match self {
                 WindowElement::Wayland(w) => SpaceElement::geometry(w),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => SpaceElement::geometry(w),
@@ -932,7 +919,7 @@ where
 
             location.y += (scale.y * HEADER_BAR_HEIGHT as f64) as i32;
 
-            let window_elements = match &self.element {
+            let window_elements = match self {
                 WindowElement::Wayland(xdg) => {
                     AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
                         xdg, renderer, location, scale, alpha,
@@ -946,7 +933,7 @@ where
             vec.extend(window_elements);
             vec.into_iter().map(C::from).collect()
         } else {
-            match &self.element {
+            match self {
                 WindowElement::Wayland(xdg) => {
                     AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
                         xdg, renderer, location, scale, alpha,
@@ -965,13 +952,13 @@ where
 }
 
 impl<BackendData: Backend> Buddaraysh<BackendData> {
-    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowMapped> {
+    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
         self.workspaces
             .workspaces()
             .find_map(|workspace| workspace.window_for_surface(surface))
     }
 
-    pub fn window_for_element(&self, window: &WindowMapped) -> Option<WindowMapped> {
+    pub fn window_for_element(&self, window: &WindowElement) -> Option<WindowElement> {
         self.workspaces
             .workspaces()
             .find_map(|workspace| workspace.window_for_element(window))

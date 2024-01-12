@@ -15,15 +15,11 @@ pub use smithay::{
     wayland::seat::WaylandFocus,
 };
 
-use crate::{
-    state::Buddaraysh,
-    window::{WindowElement, WindowMapped},
-    Backend,
-};
+use crate::{state::Buddaraysh, window::WindowElement, Backend};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FocusTarget {
-    Window(WindowMapped),
+    Window(WindowElement),
     LayerSurface(LayerSurface),
     Popup(PopupKind),
 }
@@ -327,7 +323,7 @@ impl WaylandFocus for FocusTarget {
     }
     fn same_client_as(&self, object_id: &ObjectId) -> bool {
         match self {
-            FocusTarget::Window(mapped) => match &mapped.element {
+            FocusTarget::Window(w) => match w {
                 WindowElement::Wayland(w) => w.same_client_as(object_id),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => w.same_client_as(object_id),
@@ -338,8 +334,8 @@ impl WaylandFocus for FocusTarget {
     }
 }
 
-impl From<WindowMapped> for FocusTarget {
-    fn from(w: WindowMapped) -> Self {
+impl From<WindowElement> for FocusTarget {
+    fn from(w: WindowElement) -> Self {
         FocusTarget::Window(w)
     }
 }

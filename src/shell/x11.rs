@@ -26,11 +26,9 @@ use tracing::{error, trace};
 use crate::{
     focus::FocusTarget,
     grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
-    shell::FullscreenSurface,
     ssd::HEADER_BAR_HEIGHT,
-    window::WindowElement,
     utils::geometry::{PointExt, PointLocalExt, RectExt, RectLocalExt, SizeExt},
-    window::{WindowElement, WindowMapped},
+    window::WindowElement,
     Backend, Buddaraysh, CalloopData, OutputExt,
 };
 
@@ -58,7 +56,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         if !surface.is_override_redirect() {
             surface.set_mapped(true).unwrap();
         }
-        let window = WindowMapped::new(WindowElement::X11(surface), None);
+        let window = WindowElement::X11(surface);
         if let Some(output) = self
             .state
             .output_under(self.state.pointer.current_location().as_global())
@@ -85,14 +83,14 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         self.state.override_redirect_windows.push(surface.clone());
 
         let location = surface.geometry().loc;
-        let window = WindowMapped::new(WindowElement::X11(surface), None);
+        let window = WindowElement::X11(surface);
         if let Some(workspace) = self.state.workspace_for_mut(&window) {
             workspace.map_window(window);
         }
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, surface: X11Surface) {
-        let window = WindowMapped::new(WindowElement::X11(surface.clone()), None);
+        let window = WindowElement::X11(surface.clone());
         if let Some(workspace) = self.state.workspace_for_mut(&window) {
             let maybe = workspace.windows().find(|e| **e == window).cloned();
             if let Some(elem) = maybe {
@@ -110,7 +108,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     }
 
     fn destroyed_window(&mut self, _xwm: XwmId, surface: X11Surface) {
-        let window = WindowMapped::new(WindowElement::X11(surface.clone()), None);
+        let window = WindowElement::X11(surface.clone());
         if let Some(workspace) = self.state.workspace_for_mut(&window) {
             let maybe = workspace.windows().find(|e| **e == window).cloned();
             if let Some(window) = maybe {
@@ -198,7 +196,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
     }
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        let window = WindowMapped::new(WindowElement::X11(surface), None);
+        let window = WindowElement::X11(surface);
         let output = if let Some(workspace) = self
             .state
             .window_for_surface(&window.wl_surface().unwrap())
@@ -243,7 +241,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         if let Some(keyboard) = self.state.seat.get_keyboard() {
             // check that an X11 window is focused
             if let Some(FocusTarget::Window(w)) = keyboard.current_focus() {
-                if let WindowElement::X11(surface) = w.element {
+                if let WindowElement::X11(surface) = w {
                     if surface.xwm_id().unwrap() == xwm {
                         return true;
                     }
@@ -287,7 +285,7 @@ impl<BackendData: Backend> XwmHandler for CalloopData<BackendData> {
         trace!(?selection, ?mime_types, "Got Selection from X11",);
         if let Some(keyboard) = self.state.seat.get_keyboard() {
             if let Some(FocusTarget::Window(w)) = keyboard.current_focus() {
-                if let WindowElement::X11(surface) = w.element {
+                if let WindowElement::X11(surface) = w {
                     if surface.xwm_id().unwrap() == xwm {
                         match selection {
                             SelectionTarget::Clipboard => set_data_device_selection(
@@ -339,19 +337,20 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             if let Some(workspace) = self.workspace_for(&window) {
                 let geometry = window.geometry();
                 let loc = workspace.window_location(&window).unwrap();
-                let (initial_window_location, initial_window_size) = (loc, geometry.size);
+                let mut initial_rect = Rectangle::from_loc_and_size(loc, geometry.size.as_local());
 
-                let initial_rect = Rectangle::from_loc_and_size(
-                    initial_window_location,
-                    // TODO: is this really local?
-                    initial_window_size.as_local(),
-                );
+                if window.state().is_ssd {
+                    initial_rect.size.h -= HEADER_BAR_HEIGHT;
+                }
 
-        let mut initial_rect = Rectangle::from_loc_and_size(loc, geometry.size);
-
-        if window.decoration_state().is_ssd {
-            initial_rect.size.h -= HEADER_BAR_HEIGHT;
-        }
+                compositor::with_states(&surface.wl_surface().unwrap(), |states| {
+                    states
+                        .data_map
+                        .insert_if_missing(RefCell::<ResizeSurfaceState>::default);
+                    let state = states
+                        .data_map
+                        .get::<RefCell<ResizeSurfaceState>>()
+                        .unwrap();
 
                     *state.borrow_mut() = ResizeSurfaceState::Resizing {
                         edges: edges.into(),
@@ -366,7 +365,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
                     window: window.clone(),
                     edges: edges.into(),
                     initial_rect: initial_rect.as_logical(),
-                    last_window_size: initial_window_size,
+                    last_window_size: initial_rect.size.as_logical(),
                 };
 
                 pointer.set_grab(self, grab, serial, Focus::Clear);
