@@ -437,7 +437,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         event: &MotionEvent,
     ) {
-        let mut state = self.decoration_state();
+        let mut state = self.state();
         if state.is_ssd {
             if event.location.y < HEADER_BAR_HEIGHT as f64 {
                 state.header_bar.pointer_enter(event.location);
@@ -467,7 +467,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         event: &MotionEvent,
     ) {
-        let mut state = self.decoration_state();
+        let mut state = self.state();
         if state.is_ssd {
             if event.location.y < HEADER_BAR_HEIGHT as f64 {
                 match &self.element {
@@ -514,7 +514,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         event: &RelativeMotionEvent,
     ) {
-        let state = self.decoration_state();
+        let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
             match &self.element {
                 WindowElement::Wayland(w) => PointerTarget::relative_motion(w, seat, data, event),
@@ -529,7 +529,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         event: &ButtonEvent,
     ) {
-        let mut state = self.decoration_state();
+        let mut state = self.state();
         if state.is_ssd {
             if state.ptr_entered_window {
                 match &self.element {
@@ -554,7 +554,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         frame: AxisFrame,
     ) {
-        let state = self.decoration_state();
+        let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
             match &self.element {
                 WindowElement::Wayland(w) => PointerTarget::axis(w, seat, data, frame),
@@ -564,7 +564,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         }
     }
     fn frame(&self, seat: &Seat<Buddaraysh<Backend>>, data: &mut Buddaraysh<Backend>) {
-        let state = self.decoration_state();
+        let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
             match &self.element {
                 WindowElement::Wayland(w) => PointerTarget::frame(w, seat, data),
@@ -580,7 +580,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         serial: Serial,
         time: u32,
     ) {
-        let mut state = self.decoration_state();
+        let mut state = self.state();
         if state.is_ssd {
             state.header_bar.pointer_leave();
             if state.ptr_entered_window {
@@ -606,7 +606,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         event: &GestureSwipeBeginEvent,
     ) {
-        let state = self.decoration_state();
+        let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
             match &self.element {
                 WindowElement::Wayland(w) => {
@@ -623,7 +623,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         event: &GestureSwipeUpdateEvent,
     ) {
-        let state = self.decoration_state();
+        let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
             match &self.element {
                 WindowElement::Wayland(w) => {
@@ -640,7 +640,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         event: &GestureSwipeEndEvent,
     ) {
-        let state = self.decoration_state();
+        let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
             match &self.element {
                 WindowElement::Wayland(w) => PointerTarget::gesture_swipe_end(w, seat, data, event),
@@ -655,7 +655,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         event: &GesturePinchBeginEvent,
     ) {
-        let state = self.decoration_state();
+        let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
             match &self.element {
                 WindowElement::Wayland(w) => {
@@ -672,7 +672,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         event: &GesturePinchUpdateEvent,
     ) {
-        let state = self.decoration_state();
+        let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
             match &self.element {
                 WindowElement::Wayland(w) => {
@@ -689,7 +689,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         event: &GesturePinchEndEvent,
     ) {
-        let state = self.decoration_state();
+        let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
             match &self.element {
                 WindowElement::Wayland(w) => PointerTarget::gesture_pinch_end(w, seat, data, event),
@@ -704,7 +704,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         event: &GestureHoldBeginEvent,
     ) {
-        let state = self.decoration_state();
+        let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
             match &self.element {
                 WindowElement::Wayland(w) => {
@@ -721,7 +721,7 @@ impl<Backend: crate::Backend> PointerTarget<Buddaraysh<Backend>> for WindowMappe
         data: &mut Buddaraysh<Backend>,
         event: &GestureHoldEndEvent,
     ) {
-        let state = self.decoration_state();
+        let state = self.state();
         if !state.is_ssd || state.ptr_entered_window {
             match &self.element {
                 WindowElement::Wayland(w) => PointerTarget::gesture_hold_end(w, seat, data, event),
@@ -799,7 +799,7 @@ impl SpaceElement for WindowMapped {
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => SpaceElement::geometry(w),
         };
-        if self.decoration_state().is_ssd {
+        if self.state().is_ssd {
             geo.size.h += HEADER_BAR_HEIGHT;
         }
         geo
@@ -810,13 +810,13 @@ impl SpaceElement for WindowMapped {
             #[cfg(feature = "xwayland")]
             WindowElement::X11(w) => SpaceElement::bbox(w),
         };
-        if self.decoration_state().is_ssd {
+        if self.state().is_ssd {
             bbox.size.h += HEADER_BAR_HEIGHT;
         }
         bbox
     }
     fn is_in_input_region(&self, point: &Point<f64, Logical>) -> bool {
-        if self.decoration_state().is_ssd {
+        if self.state().is_ssd {
             point.y < HEADER_BAR_HEIGHT as f64
                 || match &self.element {
                     WindowElement::Wayland(w) => SpaceElement::is_in_input_region(
@@ -912,14 +912,14 @@ where
             WindowElement::X11(w) => SpaceElement::bbox(w),
         };
 
-        if self.decoration_state().is_ssd && !window_bbox.is_empty() {
+        if self.state().is_ssd && !window_bbox.is_empty() {
             let window_geo = match &self.element {
                 WindowElement::Wayland(w) => SpaceElement::geometry(w),
                 #[cfg(feature = "xwayland")]
                 WindowElement::X11(w) => SpaceElement::geometry(w),
             };
 
-            let mut state = self.decoration_state();
+            let mut state = self.state();
             let width = window_geo.size.w;
             state.header_bar.redraw(width as u32);
             let mut vec = AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(

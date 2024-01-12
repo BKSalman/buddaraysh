@@ -22,8 +22,8 @@ pub struct WindowState {
     pub ptr_entered_window: bool,
     pub header_bar: HeaderBar,
     // TODO: use this maybe, idk
-    // pub tiling_weight_w: i32,
-    // pub tiling_weight_h: i32,
+    pub tiling_portion_w: f32,
+    pub tiling_portion_h: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -225,7 +225,7 @@ impl<R: Renderer> AsRenderElements<R> for HeaderBar {
 }
 
 impl WindowMapped {
-    pub fn decoration_state(&self) -> RefMut<'_, WindowState> {
+    pub fn state(&self) -> RefMut<'_, WindowState> {
         self.user_data().insert_if_missing(|| {
             RefCell::new(WindowState {
                 is_ssd: false,
@@ -239,6 +239,8 @@ impl WindowMapped {
                     close_button: SolidColorBuffer::default(),
                     maximize_button: SolidColorBuffer::default(),
                 },
+                tiling_portion_w: 1.,
+                tiling_portion_h: 1.,
             })
         });
 
@@ -249,6 +251,6 @@ impl WindowMapped {
     }
 
     pub fn set_ssd(&self, ssd: bool) {
-        self.decoration_state().is_ssd = ssd;
+        self.state().is_ssd = ssd;
     }
 }

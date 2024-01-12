@@ -6,8 +6,8 @@ use smithay::{
 };
 
 use crate::{
-    utils::geometry::{Global, PointExt, PointGlobalExt, PointLocalExt, RectExt, RectLocalExt},
     window::WindowMapped,
+    utils::geometry::{Global, PointGlobalExt, RectExt, RectLocalExt},
     workspace::Workspace,
     OutputExt,
 };
@@ -126,17 +126,40 @@ impl Workspace {
                     return;
                 }
 
+                let width_portions_max: f32 = windows
+                    .iter()
+                    // skip master
+                    .skip(1)
+                    .fold(None, |lmfao, lmao| {
+                        if let Some(lmfao) = lmfao {
+                            Some(lmao.state().tiling_portion_w.max(lmfao))
+                        } else {
+                            Some(lmao.state().tiling_portion_w)
+                        }
+                    })
+                    .unwrap_or(1.);
+
+                let height_portions_total: f32 = windows
+                    .iter()
+                    // skip master
+                    .skip(1)
+                    .map(|w| w.state().tiling_portion_h)
+                    .sum();
+
                 let stack_windows_count = windows.len() - 1;
                 let mut windows = windows.into_iter();
                 let Some(master) = windows.next() else {
                     return;
                 };
 
+                let master_width = master.state().tiling_portion_w
+                    + width_portions_max / 2. * geo.to_f64().size.w as f32;
+
                 if stack_windows_count > 0 {
                     // half width
                     let loc = geo.loc;
                     let size: smithay::utils::Size<i32, Global> =
-                        (geo.size.w / 2, geo.size.h).into();
+                        (master_width as i32, geo.size.h).into();
                     let master_geo = Rectangle::from_loc_and_size(loc, size);
                     master.set_geometry(master_geo);
                     master.send_configure();
@@ -144,17 +167,19 @@ impl Workspace {
                         .space
                         .map_element(master, loc.as_logical(), true);
 
-                    let stack_window_height = size.h / stack_windows_count as i32;
-
                     for (i, stack_window) in windows.enumerate() {
                         // half height with each window
+                        let stack_window_h_portion = stack_window.state().tiling_portion_h;
+                        let stack_window_height = (stack_window_h_portion / height_portions_total
+                            * geo.to_f64().size.h as f32)
+                            as i32;
                         let stack_window_geo = Rectangle::from_loc_and_size(
                             smithay::utils::Point::from((
                                 size.w,
                                 geo.loc.y + stack_window_height * i as i32,
                             )),
                             smithay::utils::Size::from((
-                                size.w,
+                                (geo.size.w - size.w).max(40),
                                 stack_window_height.max(40 /* minimum tiled window height*/),
                             )),
                         );
