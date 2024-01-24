@@ -28,8 +28,12 @@ use tracing::{error, trace};
 
 use crate::{
     focus::FocusTarget,
-    grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
+    grabs::{
+        resize_grab::{self, ResizeSurfaceState},
+        MoveSurfaceGrab, ResizeSurfaceGrab,
+    },
     shell::FullscreenSurface,
+    ssd::HEADER_BAR_HEIGHT,
     window::WindowElement,
     Backend, Buddaraysh, CalloopData,
 };
@@ -407,6 +411,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         start_data: GrabStartData<Buddaraysh<BackendData>>,
     ) {
         let pointer = seat.get_pointer().unwrap();
+        let edges = resize_grab::ResizeEdge::from(edges);
 
         let Some(window) = self
             .workspaces
@@ -423,10 +428,13 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             .current_workspace()
             .window_location(window)
             .unwrap();
-        let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
-        let initial_rect =
-            Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
+        let mut initial_rect = Rectangle::from_loc_and_size(loc, geometry.size);
+
+        if window.decoration_state().is_ssd {
+            initial_rect.size.h -= HEADER_BAR_HEIGHT;
+            initial_rect.loc.y += HEADER_BAR_HEIGHT;
+        }
 
         compositor::with_states(&window.wl_surface().unwrap(), |states| {
             states
@@ -446,7 +454,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
         let grab = ResizeSurfaceGrab {
             start_data,
             window: window.clone(),
-            edges: edges.into(),
+            edges,
             initial_rect,
             last_window_size: initial_rect.size,
         };

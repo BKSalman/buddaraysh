@@ -35,8 +35,12 @@ use smithay::{
 use tracing::{debug, trace};
 
 use crate::{
-    grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
+    grabs::{
+        resize_grab::{self, ResizeSurfaceState},
+        MoveSurfaceGrab, ResizeSurfaceGrab,
+    },
     shell::FullscreenSurface,
+    ssd::HEADER_BAR_HEIGHT,
     window::WindowElement,
     Backend, Buddaraysh,
 };
@@ -363,6 +367,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         let wl_surface = surface.wl_surface();
 
         let pointer = seat.get_pointer().unwrap();
+        let edges = resize_grab::ResizeEdge::from(edges);
 
         let window = self
             .workspaces
@@ -389,8 +394,13 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
 
         surface.send_pending_configure();
 
-        let initial_rect =
+        let mut initial_rect =
             Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
+
+        if window.decoration_state().is_ssd {
+            initial_rect.size.h -= HEADER_BAR_HEIGHT;
+            initial_rect.loc.y += HEADER_BAR_HEIGHT;
+        }
 
         compositor::with_states(surface.wl_surface(), |states| {
             states
@@ -402,7 +412,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
                 .unwrap();
 
             *state.borrow_mut() = ResizeSurfaceState::Resizing {
-                edges: edges.into(),
+                edges,
                 initial_rect,
             };
         });
@@ -410,7 +420,7 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
         let grab = ResizeSurfaceGrab {
             start_data,
             window,
-            edges: edges.into(),
+            edges,
             initial_rect,
             last_window_size: initial_rect.size,
         };
