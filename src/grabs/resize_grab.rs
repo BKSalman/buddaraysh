@@ -11,7 +11,7 @@ use smithay::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::protocol::wl_surface::WlSurface,
     },
-    utils::{Logical, Point, Rectangle, Size},
+    utils::{IsAlive, Logical, Point, Rectangle, Size},
     wayland::{compositor, shell::xdg::SurfaceCachedState},
     xwayland::xwm,
 };
@@ -168,6 +168,12 @@ impl<BackendData: Backend + 'static> PointerGrab<Buddaraysh<BackendData>>
         {
             // No more buttons are pressed, release the grab.
             handle.unset_grab(data, event.serial, event.time, true);
+
+            // If toplevel is dead, we can't resize it, so we return early.
+            if !self.window.alive() {
+                return;
+            }
+
             match &self.window {
                 WindowElement::Wayland(w) => {
                     let xdg = w.toplevel();

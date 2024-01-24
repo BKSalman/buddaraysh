@@ -30,6 +30,7 @@ use crate::{
     focus::FocusTarget,
     grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
     shell::FullscreenSurface,
+    ssd::HEADER_BAR_HEIGHT,
     window::WindowElement,
     Backend, Buddaraysh, CalloopData,
 };
@@ -423,10 +424,12 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
             .current_workspace()
             .window_location(window)
             .unwrap();
-        let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
-        let initial_rect =
-            Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
+        let mut initial_rect = Rectangle::from_loc_and_size(loc, geometry.size);
+
+        if window.decoration_state().is_ssd {
+            initial_rect.size.h -= HEADER_BAR_HEIGHT;
+        }
 
         compositor::with_states(&window.wl_surface().unwrap(), |states| {
             states

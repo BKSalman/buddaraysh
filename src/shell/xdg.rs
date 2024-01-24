@@ -37,6 +37,7 @@ use tracing::{debug, trace};
 use crate::{
     grabs::{resize_grab::ResizeSurfaceState, MoveSurfaceGrab, ResizeSurfaceGrab},
     shell::FullscreenSurface,
+    ssd::HEADER_BAR_HEIGHT,
     window::WindowElement,
     Backend, Buddaraysh,
 };
@@ -389,8 +390,12 @@ impl<BackendData: Backend> Buddaraysh<BackendData> {
 
         surface.send_pending_configure();
 
-        let initial_rect =
+        let mut initial_rect =
             Rectangle::from_loc_and_size(initial_window_location, initial_window_size);
+
+        if window.decoration_state().is_ssd {
+            initial_rect.size.h -= HEADER_BAR_HEIGHT;
+        }
 
         compositor::with_states(surface.wl_surface(), |states| {
             states
