@@ -155,7 +155,7 @@ impl<BackendData: Backend + 'static> Buddaraysh<BackendData> {
                 options: Some(String::from("grp:alt_shift_toggle")),
                 ..Default::default()
             },
-            200,
+            500,
             25,
         )
         .unwrap();
